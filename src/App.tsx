@@ -29,12 +29,13 @@ import type {
   Department,
   AppointmentStatus,
   DashboardStats,
-  Patient
+  Patient,
+  CardFilterType
 } from './types';
 import { appointmentService } from './services/appointmentService';
 import { doctorService } from './services/doctorService';
 import { departmentService } from './services/departmentService';
-import { statsService } from './services/statsService';
+import { statsService, getTodayDateStr } from './services/statsService';
 import { storageService } from './services/storageService';
 import { patientService } from './services/patientService';
 
@@ -79,12 +80,13 @@ export const App: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
 
   // Filter Bar State
+  const [activeCardFilter, setActiveCardFilter] = useState<CardFilterType>('today');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedDoctor, setSelectedDoctor] = useState<string>('all');
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<AppointmentStatus | 'All'>('All');
   const [selectedDate, setSelectedDate] = useState<string>(() => {
-    return storageService.getCurrentDate() || new Date().toISOString().split('T')[0];
+    return storageService.getCurrentDate() || getTodayDateStr();
   });
 
   // Modals & Feedback
@@ -126,17 +128,20 @@ export const App: React.FC = () => {
   // Fetch appointments and stats
   const refreshData = useCallback(async () => {
     try {
+      const todayDate = getTodayDateStr();
       const [res, currentStats] = await Promise.all([
         appointmentService.getAppointments({
           searchQuery,
           doctorId: selectedDoctor,
           departmentId: selectedDepartment,
           status: selectedStatus,
-          date: selectedDate,
+          date: activeCardFilter === 'today' ? (selectedDate || todayDate) : selectedDate,
+          cardFilter: activeCardFilter,
+          referenceDate: todayDate,
           page: currentPage,
           limit: 6,
         }),
-        statsService.getDashboardStats(selectedDate),
+        statsService.getDashboardStats(todayDate),
       ]);
 
       setAppointments(res.data);
@@ -146,7 +151,7 @@ export const App: React.FC = () => {
     } catch {
       addToast('error', 'Failed to retrieve appointments data.');
     }
-  }, [searchQuery, selectedDoctor, selectedDepartment, selectedStatus, selectedDate, currentPage]);
+  }, [searchQuery, selectedDoctor, selectedDepartment, selectedStatus, selectedDate, activeCardFilter, currentPage]);
 
   useEffect(() => {
     refreshData();
@@ -166,16 +171,41 @@ export const App: React.FC = () => {
   };
 
   // Handlers
+  const handleSelectCardFilter = (filter: CardFilterType) => {
+    setActiveCardFilter(filter);
+    setCurrentPage(1);
+
+    const todayDate = getTodayDateStr();
+    if (filter === 'today') {
+      setSelectedDate(todayDate);
+      setSelectedStatus('All');
+    } else if (filter === 'upcoming') {
+      setSelectedDate('');
+      setSelectedStatus('All');
+    } else if (filter === 'completed') {
+      setSelectedDate('');
+      setSelectedStatus('Completed');
+    } else if (filter === 'cancelled') {
+      setSelectedDate('');
+      setSelectedStatus('Cancelled');
+    } else if (filter === 'noshow') {
+      setSelectedDate('');
+      setSelectedStatus('No-show');
+    } else {
+      setSelectedDate('');
+      setSelectedStatus('All');
+    }
+  };
+
   const handleClearFilters = () => {
     setSearchQuery('');
     setSelectedDoctor('all');
     setSelectedDepartment('all');
     setSelectedStatus('All');
-    const today = new Date().toISOString().split('T')[0];
-    setSelectedDate(today);
-    storageService.setCurrentDate(today);
+    setSelectedDate('');
+    setActiveCardFilter('all');
     setCurrentPage(1);
-    addToast('info', 'Filters reset to default view.');
+    addToast('info', 'Filters reset to show all appointments.');
   };
 
   const handleStatusChange = async (appointmentId: string, newStatus: AppointmentStatus) => {
@@ -329,7 +359,15 @@ export const App: React.FC = () => {
             onDateChange={(d) => {
               setSelectedDate(d);
               setCurrentPage(1);
+              const todayDate = getTodayDateStr();
+              if (d === todayDate) {
+                setActiveCardFilter('today');
+              } else if (activeCardFilter === 'today') {
+                setActiveCardFilter('all');
+              }
             }}
+            activeCardFilter={activeCardFilter}
+            onSelectCardFilter={handleSelectCardFilter}
             onClearFilters={handleClearFilters}
             onViewDetails={(apt) => setViewingAppointment(apt)}
             onReschedule={(apt) => setReschedulingAppointment(apt)}

@@ -1,4 +1,15 @@
-import type { Patient, Doctor, Department, Appointment, PatientRegistration, InsuranceInfo, PriorAuthorization, InsuranceCommunicationRequest, ChargeCaptureEncounter, MedicalCodingRecord } from '../types';
+import type {
+  Patient,
+  Doctor,
+  Department,
+  Appointment,
+  PatientRegistration,
+  InsuranceInfo,
+  PriorAuthorization,
+  InsuranceCommunicationRequest,
+  ChargeCaptureEncounter,
+  MedicalCodingRecord
+} from '../types';
 import {
   INITIAL_PATIENTS,
   INITIAL_DOCTORS,
@@ -8,21 +19,22 @@ import {
   INITIAL_INSURANCES,
   INITIAL_PRIOR_AUTHORIZATIONS,
   INITIAL_INSURANCE_COMMUNICATIONS,
-  INITIAL_CHARGE_CAPTURES
+  INITIAL_CHARGE_CAPTURES,
+  INITIAL_MEDICAL_CODINGS
 } from '../data/mockData';
 
 const STORAGE_KEYS = {
-  PATIENTS: 'medicare_rcm_patients_v2',
-  DOCTORS: 'medicare_rcm_doctors_v2',
-  DEPARTMENTS: 'medicare_rcm_departments_v2',
-  APPOINTMENTS: 'medicare_rcm_appointments_v2',
-  REGISTRATIONS: 'medicare_rcm_registrations_v2',
-  INSURANCE: 'medicare_rcm_insurance_v2',
-  PRIOR_AUTHORIZATIONS: 'medicare_rcm_prior_authorizations_v2',
-  INSURANCE_COMMUNICATIONS: 'medicare_rcm_insurance_communications_v2',
-  CHARGE_CAPTURES: 'medicare_rcm_charge_captures_v2',
-  MEDICAL_CODINGS: 'medicare_rcm_medical_codings_v2',
-  APP_DATE: 'medicare_rcm_current_date_v2',
+  PATIENTS: 'medicare_rcm_patients_v3',
+  DOCTORS: 'medicare_rcm_doctors_v3',
+  DEPARTMENTS: 'medicare_rcm_departments_v3',
+  APPOINTMENTS: 'medicare_rcm_appointments_v3',
+  REGISTRATIONS: 'medicare_rcm_registrations_v3',
+  INSURANCE: 'medicare_rcm_insurance_v3',
+  PRIOR_AUTHORIZATIONS: 'medicare_rcm_prior_authorizations_v3',
+  INSURANCE_COMMUNICATIONS: 'medicare_rcm_insurance_communications_v3',
+  CHARGE_CAPTURES: 'medicare_rcm_charge_captures_v3',
+  MEDICAL_CODINGS: 'medicare_rcm_medical_codings_v3',
+  APP_DATE: 'medicare_rcm_current_date_v3',
 };
 
 // Purge legacy sample data keys from localStorage
@@ -39,6 +51,17 @@ if (typeof window !== 'undefined' && window.localStorage) {
     'medicare_rcm_charge_captures_v1',
     'medicare_rcm_medical_codings_v1',
     'medicare_rcm_current_date_v1',
+    'medicare_rcm_patients_v2',
+    'medicare_rcm_doctors_v2',
+    'medicare_rcm_departments_v2',
+    'medicare_rcm_appointments_v2',
+    'medicare_rcm_registrations_v2',
+    'medicare_rcm_insurance_v2',
+    'medicare_rcm_prior_authorizations_v2',
+    'medicare_rcm_insurance_communications_v2',
+    'medicare_rcm_charge_captures_v2',
+    'medicare_rcm_medical_codings_v2',
+    'medicare_rcm_current_date_v2',
   ].forEach((k) => localStorage.removeItem(k));
 }
 
@@ -50,7 +73,12 @@ export const storageService = {
       return INITIAL_PATIENTS;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_PATIENTS.length > 0) {
+        this.setPatients(INITIAL_PATIENTS);
+        return INITIAL_PATIENTS;
+      }
+      return parsed;
     } catch {
       return INITIAL_PATIENTS;
     }
@@ -67,7 +95,12 @@ export const storageService = {
       return INITIAL_DOCTORS;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_DOCTORS.length > 0) {
+        this.setDoctors(INITIAL_DOCTORS);
+        return INITIAL_DOCTORS;
+      }
+      return parsed;
     } catch {
       return INITIAL_DOCTORS;
     }
@@ -84,7 +117,12 @@ export const storageService = {
       return INITIAL_DEPARTMENTS;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_DEPARTMENTS.length > 0) {
+        this.setDepartments(INITIAL_DEPARTMENTS);
+        return INITIAL_DEPARTMENTS;
+      }
+      return parsed;
     } catch {
       return INITIAL_DEPARTMENTS;
     }
@@ -101,7 +139,12 @@ export const storageService = {
       return INITIAL_APPOINTMENTS;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_APPOINTMENTS.length > 0) {
+        this.setAppointments(INITIAL_APPOINTMENTS);
+        return INITIAL_APPOINTMENTS;
+      }
+      return parsed;
     } catch {
       return INITIAL_APPOINTMENTS;
     }
@@ -118,7 +161,12 @@ export const storageService = {
       return INITIAL_REGISTRATIONS;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_REGISTRATIONS.length > 0) {
+        this.setRegistrations(INITIAL_REGISTRATIONS);
+        return INITIAL_REGISTRATIONS;
+      }
+      return parsed;
     } catch {
       return INITIAL_REGISTRATIONS;
     }
@@ -151,7 +199,12 @@ export const storageService = {
       return INITIAL_INSURANCES;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_INSURANCES.length > 0) {
+        this.setInsuranceList(INITIAL_INSURANCES);
+        return INITIAL_INSURANCES;
+      }
+      return parsed;
     } catch {
       return INITIAL_INSURANCES;
     }
@@ -184,7 +237,12 @@ export const storageService = {
       return INITIAL_PRIOR_AUTHORIZATIONS;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_PRIOR_AUTHORIZATIONS.length > 0) {
+        this.setPriorAuthorizations(INITIAL_PRIOR_AUTHORIZATIONS);
+        return INITIAL_PRIOR_AUTHORIZATIONS;
+      }
+      return parsed;
     } catch {
       return INITIAL_PRIOR_AUTHORIZATIONS;
     }
@@ -222,7 +280,12 @@ export const storageService = {
       return INITIAL_INSURANCE_COMMUNICATIONS;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_INSURANCE_COMMUNICATIONS.length > 0) {
+        this.setInsuranceCommunications(INITIAL_INSURANCE_COMMUNICATIONS);
+        return INITIAL_INSURANCE_COMMUNICATIONS;
+      }
+      return parsed;
     } catch {
       return INITIAL_INSURANCE_COMMUNICATIONS;
     }
@@ -261,7 +324,12 @@ export const storageService = {
       return INITIAL_CHARGE_CAPTURES;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_CHARGE_CAPTURES.length > 0) {
+        this.setChargeCaptures(INITIAL_CHARGE_CAPTURES);
+        return INITIAL_CHARGE_CAPTURES;
+      }
+      return parsed;
     } catch {
       return INITIAL_CHARGE_CAPTURES;
     }
@@ -290,12 +358,18 @@ export const storageService = {
   getMedicalCodings(): MedicalCodingRecord[] {
     const raw = localStorage.getItem(STORAGE_KEYS.MEDICAL_CODINGS);
     if (!raw) {
-      return [];
+      this.setMedicalCodings(INITIAL_MEDICAL_CODINGS);
+      return INITIAL_MEDICAL_CODINGS;
     }
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === 0 && INITIAL_MEDICAL_CODINGS.length > 0) {
+        this.setMedicalCodings(INITIAL_MEDICAL_CODINGS);
+        return INITIAL_MEDICAL_CODINGS;
+      }
+      return parsed;
     } catch {
-      return [];
+      return INITIAL_MEDICAL_CODINGS;
     }
   },
 
@@ -320,11 +394,15 @@ export const storageService = {
   },
 
   getCurrentDate(): string {
-    return localStorage.getItem(STORAGE_KEYS.APP_DATE) || new Date().toISOString().split('T')[0];
+    return localStorage.getItem(STORAGE_KEYS.APP_DATE) || new Date().getFullYear() + '-' + String(new Date().getMonth() + 1).padStart(2, '0') + '-' + String(new Date().getDate()).padStart(2, '0');
   },
 
   setCurrentDate(date: string): void {
-    localStorage.setItem(STORAGE_KEYS.APP_DATE, date);
+    if (date) {
+      localStorage.setItem(STORAGE_KEYS.APP_DATE, date);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.APP_DATE);
+    }
   },
 
   resetAllToDefault(): void {
@@ -337,6 +415,7 @@ export const storageService = {
     this.setPriorAuthorizations(INITIAL_PRIOR_AUTHORIZATIONS);
     this.setInsuranceCommunications(INITIAL_INSURANCE_COMMUNICATIONS);
     this.setChargeCaptures(INITIAL_CHARGE_CAPTURES);
+    this.setMedicalCodings(INITIAL_MEDICAL_CODINGS);
     this.setCurrentDate(new Date().toISOString().split('T')[0]);
   }
 };

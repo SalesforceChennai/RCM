@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n \"SERVER,CLIENT\" -c \"cyan,magenta\" \"npm run server\" \"npm run client\"",
-    "server": "node --experimental-strip-types server/index.ts",
-    "seed": "node --experimental-strip-types server/data/seed.ts",
+    "server": "node --max-old-space-size=4096 --experimental-strip-types server/index.ts",
+    "seed": "node --max-old-space-size=4096 --experimental-strip-types server/data/seed.ts",
     "client": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",

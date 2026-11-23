@@ -448,6 +448,37 @@ export const AiAssistantPage: React.FC<AiAssistantPageProps> = ({
               Ask questions about patients, appointments, billing encounters, claims, denials,
               remittances, or request module navigation.
             </p>
+
+            <div className="ai-quick-prompts-grid" style={{ marginTop: 24, width: '100%', maxWidth: 760 }}>
+              <div
+                className="ai-prompt-card"
+                onClick={() => handleSendMessage('Which insurance claims were denied recently and what are the denial reasons?')}
+              >
+                <span className="ai-prompt-tag">Claims & Denials</span>
+                <span className="ai-prompt-text">Which insurance claims were denied recently and what are the denial reasons?</span>
+              </div>
+              <div
+                className="ai-prompt-card"
+                onClick={() => handleSendMessage('Show me all pending prior authorization requests needing clinical review')}
+              >
+                <span className="ai-prompt-tag">Prior Authorization</span>
+                <span className="ai-prompt-text">Show me all pending prior authorization requests needing clinical review</span>
+              </div>
+              <div
+                className="ai-prompt-card"
+                onClick={() => handleSendMessage('What is our total billed revenue and outstanding AR across departments?')}
+              >
+                <span className="ai-prompt-tag">Financial Analytics</span>
+                <span className="ai-prompt-text">What is our total billed revenue and outstanding AR across departments?</span>
+              </div>
+              <div
+                className="ai-prompt-card"
+                onClick={() => handleSendMessage('Who are the patients scheduled for cardiology and orthopedic consultations today?')}
+              >
+                <span className="ai-prompt-tag">Scheduling Dashboard</span>
+                <span className="ai-prompt-text">Who are the patients scheduled for cardiology and orthopedic consultations today?</span>
+              </div>
+            </div>
           </div>
         ) : (
           messages.map((msg) => (

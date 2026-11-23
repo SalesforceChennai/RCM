@@ -1,7 +1,7 @@
 import React from 'react';
 import { StatCards } from '../components/StatCards';
 import { AppointmentTable } from '../components/AppointmentTable';
-import type { Appointment, Doctor, Department, AppointmentStatus, DashboardStats } from '../types';
+import type { Appointment, Doctor, Department, AppointmentStatus, DashboardStats, CardFilterType } from '../types';
 
 interface DashboardPageProps {
   stats: DashboardStats;
@@ -22,6 +22,8 @@ interface DashboardPageProps {
   onStatusChange: (s: AppointmentStatus | 'All') => void;
   selectedDate: string;
   onDateChange: (d: string) => void;
+  activeCardFilter: CardFilterType;
+  onSelectCardFilter: (filter: CardFilterType) => void;
   onClearFilters: () => void;
   onViewDetails: (appointment: Appointment) => void;
   onReschedule: (appointment: Appointment) => void;
@@ -50,6 +52,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   onStatusChange,
   selectedDate,
   onDateChange,
+  activeCardFilter,
+  onSelectCardFilter,
   onClearFilters,
   onViewDetails,
   onReschedule,
@@ -63,10 +67,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       {/* 5 KPI Stat Cards */}
       <StatCards
         stats={stats}
-        activeStatusFilter={selectedStatus}
-        onSelectFilter={(status) => {
-          onStatusChange(status);
-        }}
+        activeCardFilter={activeCardFilter}
+        onSelectCardFilter={onSelectCardFilter}
       />
 
       {/* Main Appointment Table with Filters & Pagination */}
@@ -88,6 +90,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         onStatusChange={onStatusChange}
         selectedDate={selectedDate}
         onDateChange={onDateChange}
+        activeCardFilter={activeCardFilter}
         onClearFilters={onClearFilters}
         onViewDetails={onViewDetails}
         onReschedule={onReschedule}

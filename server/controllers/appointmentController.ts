@@ -53,11 +53,38 @@ const APPOINTMENT_BASE_SELECT = `
 
 export async function getAllAppointments(req: Request, res: Response): Promise<void> {
   try {
-    const { searchQuery, doctorId, departmentId, status, date, startDate, endDate, month } = req.query;
+    const { searchQuery, doctorId, departmentId, status, date, startDate, endDate, month, cardFilter, referenceDate } = req.query;
 
     let conditions: string[] = [];
     let params: any[] = [];
     let idx = 1;
+
+    const refDate = (typeof referenceDate === 'string' && referenceDate.trim())
+      ? referenceDate.trim()
+      : new Date().toISOString().split('T')[0];
+
+    // Card Filter Logic
+    if (cardFilter && typeof cardFilter === 'string' && cardFilter.trim() && cardFilter.trim().toLowerCase() !== 'all') {
+      const cf = cardFilter.trim().toLowerCase();
+      if (cf === 'today') {
+        conditions.push(`a.appointment_date = $${idx}`);
+        params.push(refDate);
+        idx++;
+      } else if (cf === 'upcoming') {
+        conditions.push(`(
+          (a.appointment_date > $${idx} AND LOWER(a.status) != 'cancelled') OR
+          (a.appointment_date = $${idx} AND LOWER(a.status) IN ('scheduled', 'confirmed'))
+        )`);
+        params.push(refDate);
+        idx++;
+      } else if (cf === 'completed') {
+        conditions.push(`LOWER(a.status) = 'completed'`);
+      } else if (cf === 'cancelled') {
+        conditions.push(`LOWER(a.status) = 'cancelled'`);
+      } else if (cf === 'noshow' || cf === 'no-show') {
+        conditions.push(`LOWER(a.status) = 'no-show'`);
+      }
+    }
 
     if (searchQuery && typeof searchQuery === 'string' && searchQuery.trim()) {
       conditions.push(`(
@@ -66,19 +93,20 @@ export async function getAllAppointments(req: Request, res: Response): Promise<v
         LOWER(p.last_name) LIKE $${idx} OR
         LOWER(CONCAT(p.first_name, ' ', p.last_name)) LIKE $${idx} OR
         LOWER(p.patient_id) LIKE $${idx} OR
+        p.phone LIKE $${idx} OR
         LOWER(d.name) LIKE $${idx}
       )`);
       params.push(`%${searchQuery.trim().toLowerCase()}%`);
       idx++;
     }
 
-    if (doctorId && typeof doctorId === 'string' && doctorId.trim() && doctorId !== 'All') {
+    if (doctorId && typeof doctorId === 'string' && doctorId.trim() && doctorId.toLowerCase() !== 'all') {
       conditions.push(`a.doctor_id = $${idx}`);
       params.push(doctorId.trim());
       idx++;
     }
 
-    if (departmentId && typeof departmentId === 'string' && departmentId.trim() && departmentId !== 'All') {
+    if (departmentId && typeof departmentId === 'string' && departmentId.trim() && departmentId.toLowerCase() !== 'all') {
       conditions.push(`(
         a.department_id = $${idx} OR
         d.department_id = $${idx} OR
@@ -89,13 +117,13 @@ export async function getAllAppointments(req: Request, res: Response): Promise<v
       idx++;
     }
 
-    if (status && typeof status === 'string' && status.trim() && status !== 'All') {
+    if (status && typeof status === 'string' && status.trim() && status.toLowerCase() !== 'all') {
       conditions.push(`LOWER(a.status) = LOWER($${idx})`);
       params.push(status.trim());
       idx++;
     }
 
-    if (date && typeof date === 'string' && date.trim()) {
+    if (date && typeof date === 'string' && date.trim() && date.toLowerCase() !== 'all') {
       conditions.push(`a.appointment_date = $${idx}`);
       params.push(date.trim());
       idx++;
@@ -127,6 +155,39 @@ export async function getAllAppointments(req: Request, res: Response): Promise<v
     res.status(200).json({ success: true, data });
   } catch (err: any) {
     res.status(500).json({ success: false, message: err?.message || 'Failed to fetch appointments.' });
+  }
+}
+
+export async function getAppointmentStats(req: Request, res: Response): Promise<void> {
+  try {
+    const { referenceDate } = req.query;
+    const refDate = (typeof referenceDate === 'string' && referenceDate.trim())
+      ? referenceDate.trim()
+      : new Date().toISOString().split('T')[0];
+
+    const sql = `
+      SELECT
+        COUNT(*) FILTER (WHERE a.appointment_date = $1)::int AS "todayAppointmentsCount",
+        COUNT(*) FILTER (WHERE (a.appointment_date > $1 AND LOWER(a.status) != 'cancelled') OR (a.appointment_date = $1 AND LOWER(a.status) IN ('scheduled', 'confirmed')))::int AS "upcomingAppointmentsCount",
+        COUNT(*) FILTER (WHERE LOWER(a.status) = 'completed')::int AS "completedAppointmentsCount",
+        COUNT(*) FILTER (WHERE LOWER(a.status) = 'cancelled')::int AS "cancelledAppointmentsCount",
+        COUNT(*) FILTER (WHERE LOWER(a.status) = 'no-show')::int AS "noShowAppointmentsCount"
+      FROM appointments a
+    `;
+    const result = await query(sql, [refDate]);
+    const row = result.rows[0] || {};
+    res.status(200).json({
+      success: true,
+      data: {
+        todayAppointmentsCount: Number(row.todayAppointmentsCount || 0),
+        upcomingAppointmentsCount: Number(row.upcomingAppointmentsCount || 0),
+        completedAppointmentsCount: Number(row.completedAppointmentsCount || 0),
+        cancelledAppointmentsCount: Number(row.cancelledAppointmentsCount || 0),
+        noShowAppointmentsCount: Number(row.noShowAppointmentsCount || 0),
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err?.message || 'Failed to fetch appointment stats.' });
   }
 }
 

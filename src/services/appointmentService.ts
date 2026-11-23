@@ -1,5 +1,6 @@
 import type { Appointment, AppointmentFilterParams, AppointmentStatus, Doctor, TimeSlot } from '../types';
 import { storageService } from './storageService';
+import { filterAppointmentsByCard, getTodayDateStr } from './statsService';
 
 export function parseTimeToMinutes(timeStr: string): number {
   if (!timeStr) return 0;
@@ -69,16 +70,26 @@ export const appointmentService = {
       if (params.departmentId && params.departmentId !== 'all') qParams.set('departmentId', params.departmentId);
       if (params.status && params.status !== 'All') qParams.set('status', params.status);
       if (params.searchQuery) qParams.set('searchQuery', params.searchQuery);
+      if (params.cardFilter && params.cardFilter !== 'all') qParams.set('cardFilter', params.cardFilter);
+      if (params.referenceDate) qParams.set('referenceDate', params.referenceDate);
 
       const res = await fetch(`/api/appointments?${qParams.toString()}`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          // If we retrieved appointments from PostgreSQL, sync to storageService
-          if (json.data.length > 0) {
-            storageService.setAppointments(json.data);
-          }
           const all = json.data as Appointment[];
+          // Only cache in storageService if an unfiltered query is run, so we don't clobber the cached dataset with a small subset
+          const isUnfiltered =
+            (!params.cardFilter || params.cardFilter === 'all') &&
+            (!params.date || params.date === 'all') &&
+            (!params.status || params.status === 'All') &&
+            (!params.doctorId || params.doctorId === 'all') &&
+            (!params.departmentId || params.departmentId === 'all') &&
+            !params.searchQuery;
+          if (isUnfiltered && all.length > 0) {
+            storageService.setAppointments(all);
+          }
+
           const total = all.length;
           const page = params.page || 1;
           const limit = params.limit || 6;
@@ -100,7 +111,14 @@ export const appointmentService = {
     }
 
     let appointments = storageService.getAppointments();
+    const todayDate = params.referenceDate || getTodayDateStr();
 
+    // 1. Apply Card Filter if specified
+    if (params.cardFilter && params.cardFilter !== 'all') {
+      appointments = filterAppointmentsByCard(appointments, params.cardFilter, todayDate);
+    }
+
+    // 2. Apply Date Filter (if cardFilter is not today or date is explicitly set)
     if (params.date && params.date !== 'all') {
       appointments = appointments.filter((a) => a.appointmentDate === params.date);
     }

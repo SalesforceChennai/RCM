@@ -18,7 +18,7 @@ import {
   UserX,
   X
 } from 'lucide-react';
-import type { Appointment, Doctor, Department, AppointmentStatus } from '../types';
+import type { Appointment, Doctor, Department, AppointmentStatus, CardFilterType } from '../types';
 
 interface AppointmentTableProps {
   appointments: Appointment[];
@@ -38,6 +38,7 @@ interface AppointmentTableProps {
   onStatusChange: (s: AppointmentStatus | 'All') => void;
   selectedDate: string;
   onDateChange: (d: string) => void;
+  activeCardFilter?: CardFilterType;
   onClearFilters: () => void;
   onViewDetails: (appointment: Appointment) => void;
   onReschedule: (appointment: Appointment) => void;
@@ -65,6 +66,7 @@ export const AppointmentTable: React.FC<AppointmentTableProps> = ({
   onStatusChange,
   selectedDate,
   onDateChange,
+  activeCardFilter,
   onClearFilters,
   onViewDetails,
   onReschedule,
@@ -74,6 +76,44 @@ export const AppointmentTable: React.FC<AppointmentTableProps> = ({
   onOpenCalendar,
 }) => {
   const [activeDropdownId, setActiveDropdownId] = useState<string | null>(null);
+
+  const getHeaderInfo = () => {
+    switch (activeCardFilter) {
+      case 'today':
+        return {
+          title: "Today's Appointments",
+          sub: "Schedule and manage today's patient appointments.",
+        };
+      case 'upcoming':
+        return {
+          title: 'Upcoming Appointments',
+          sub: 'Schedule and manage upcoming patient appointments.',
+        };
+      case 'completed':
+        return {
+          title: 'Completed Appointments',
+          sub: 'Review and manage all completed patient appointments.',
+        };
+      case 'cancelled':
+        return {
+          title: 'Cancelled Appointments',
+          sub: 'Review and manage all cancelled patient appointments.',
+        };
+      case 'noshow':
+        return {
+          title: 'No-show Appointments',
+          sub: 'Review and manage all missed patient appointments.',
+        };
+      case 'all':
+      default:
+        return {
+          title: 'All Appointments',
+          sub: 'Schedule, track, and manage all patient appointments.',
+        };
+    }
+  };
+
+  const headerInfo = getHeaderInfo();
 
   const getDepartmentIcon = (iconName: string, color: string) => {
     switch (iconName) {
@@ -122,8 +162,8 @@ export const AppointmentTable: React.FC<AppointmentTableProps> = ({
             <Calendar size={22} strokeWidth={2.2} />
           </div>
           <div>
-            <h2 className="card-header-title">Today's Appointments</h2>
-            <p className="card-header-sub">Schedule and manage today's patient appointments.</p>
+            <h2 className="card-header-title">{headerInfo.title}</h2>
+            <p className="card-header-sub">{headerInfo.sub}</p>
           </div>
         </div>
 
@@ -217,7 +257,12 @@ export const AppointmentTable: React.FC<AppointmentTableProps> = ({
         />
 
         {/* Reset / Clear */}
-        {(searchQuery || selectedDoctor !== 'all' || selectedDepartment !== 'all' || selectedStatus !== 'All' || (selectedDate && selectedDate !== new Date().toISOString().split('T')[0])) && (
+        {(Boolean(searchQuery) ||
+          selectedDoctor !== 'all' ||
+          selectedDepartment !== 'all' ||
+          selectedStatus !== 'All' ||
+          Boolean(selectedDate) ||
+          (activeCardFilter && activeCardFilter !== 'all')) && (
           <button
             type="button"
             className="filter-clear-btn"

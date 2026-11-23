@@ -7,20 +7,27 @@ import {
   UserX,
   ArrowRight
 } from 'lucide-react';
-import type { DashboardStats, AppointmentStatus } from '../types';
+import type { DashboardStats, CardFilterType } from '../types';
 
 interface StatCardsProps {
   stats: DashboardStats;
-  activeStatusFilter: AppointmentStatus | 'All';
-  onSelectFilter: (filter: AppointmentStatus | 'All') => void;
+  activeCardFilter: CardFilterType;
+  onSelectCardFilter: (filter: CardFilterType) => void;
 }
 
 export const StatCards: React.FC<StatCardsProps> = ({
   stats,
-  activeStatusFilter,
-  onSelectFilter,
+  activeCardFilter,
+  onSelectCardFilter,
 }) => {
-  const cards = [
+  const cards: Array<{
+    id: CardFilterType;
+    title: string;
+    value: number;
+    icon: typeof Calendar;
+    theme: string;
+    actionText: string;
+  }> = [
     {
       id: 'today',
       title: "Today's Appointments",
@@ -28,7 +35,6 @@ export const StatCards: React.FC<StatCardsProps> = ({
       icon: Calendar,
       theme: 'blue',
       actionText: "View today's schedule",
-      statusFilter: 'All' as const,
     },
     {
       id: 'upcoming',
@@ -37,7 +43,6 @@ export const StatCards: React.FC<StatCardsProps> = ({
       icon: CalendarCheck2,
       theme: 'green',
       actionText: 'View upcoming',
-      statusFilter: 'Confirmed' as const,
     },
     {
       id: 'completed',
@@ -46,7 +51,6 @@ export const StatCards: React.FC<StatCardsProps> = ({
       icon: CheckCircle,
       theme: 'purple',
       actionText: 'View completed',
-      statusFilter: 'Completed' as const,
     },
     {
       id: 'cancelled',
@@ -55,7 +59,6 @@ export const StatCards: React.FC<StatCardsProps> = ({
       icon: XCircle,
       theme: 'red',
       actionText: 'View cancelled',
-      statusFilter: 'Cancelled' as const,
     },
     {
       id: 'noshow',
@@ -64,7 +67,6 @@ export const StatCards: React.FC<StatCardsProps> = ({
       icon: UserX,
       theme: 'orange',
       actionText: 'View no-shows',
-      statusFilter: 'No-show' as const,
     },
   ];
 
@@ -72,13 +74,29 @@ export const StatCards: React.FC<StatCardsProps> = ({
     <div className="stats-grid">
       {cards.map((card) => {
         const Icon = card.icon;
-        const isActive = activeStatusFilter === card.statusFilter && card.statusFilter !== 'All';
+        const isActive = activeCardFilter === card.id;
+
+        const handleCardClick = () => {
+          if (activeCardFilter === card.id) {
+            onSelectCardFilter('all');
+          } else {
+            onSelectCardFilter(card.id);
+          }
+        };
 
         return (
           <div
             key={card.id}
             className={`stat-card ${isActive ? 'active-filter' : ''}`}
-            onClick={() => onSelectFilter(card.statusFilter)}
+            onClick={handleCardClick}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleCardClick();
+              }
+            }}
           >
             <div className="stat-card-header">
               <div className={`stat-icon-wrapper ${card.theme}`}>
@@ -90,7 +108,22 @@ export const StatCards: React.FC<StatCardsProps> = ({
               </div>
             </div>
 
-            <div className={`stat-action-link ${card.theme}`}>
+            <div
+              className={`stat-action-link ${card.theme}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectCardFilter(card.id);
+              }}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSelectCardFilter(card.id);
+                }
+              }}
+            >
               <span>{card.actionText}</span>
               <ArrowRight size={13} strokeWidth={2.5} />
             </div>

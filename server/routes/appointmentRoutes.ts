@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getAllAppointments,
   getAppointmentById,
+  getAppointmentStats,
   createAppointment,
   updateAppointmentStatus,
   updateAppointment,
@@ -10,6 +11,7 @@ import {
 
 const router = Router();
 
+router.get('/stats', getAppointmentStats);
 router.get('/', getAllAppointments);
 router.get('/:id', getAppointmentById);
 router.post('/', createAppointment);

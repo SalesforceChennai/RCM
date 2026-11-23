@@ -7,13 +7,15 @@ import type {
   PaymentStatus
 } from '../types/paymentPrediction';
 import { RandomForestClassifier } from './randomForestClassifier';
+import { INITIAL_CLAIMS } from '../data/mockData';
 
-const STORAGE_KEY_CUSTOM_CLAIMS = 'medicare_rcm_claims_registry_v2';
+const STORAGE_KEY_CUSTOM_CLAIMS = 'medicare_rcm_claims_registry_v3';
 
 // Purge any legacy synthetic claims from localStorage
 if (typeof window !== 'undefined' && window.localStorage) {
   try {
     window.localStorage.removeItem('medicare_rcm_custom_claims_v1');
+    window.localStorage.removeItem('medicare_rcm_claims_registry_v2');
   } catch {
     // Ignore error
   }
@@ -64,12 +66,22 @@ class PaymentPredictionService {
       const storedRaw = localStorage.getItem(STORAGE_KEY_CUSTOM_CLAIMS);
       if (storedRaw) {
         const customClaims: ClaimRecord[] = JSON.parse(storedRaw);
-        if (Array.isArray(customClaims)) {
+        if (Array.isArray(customClaims) && customClaims.length > 0) {
           baseClaims.push(...customClaims);
         }
       }
     } catch (e) {
       console.warn('Could not read stored claims', e);
+    }
+
+    // Fall back to INITIAL_CLAIMS if storage is empty
+    if (baseClaims.length === 0) {
+      baseClaims.push(...INITIAL_CLAIMS);
+      try {
+        localStorage.setItem(STORAGE_KEY_CUSTOM_CLAIMS, JSON.stringify(INITIAL_CLAIMS));
+      } catch (e) {
+        console.warn('Could not persist initial claims', e);
+      }
     }
 
     this.claims = baseClaims;

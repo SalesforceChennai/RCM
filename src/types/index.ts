@@ -348,6 +348,8 @@ export interface ChargeCaptureEncounter {
   updatedAt: string;
 }
 
+export type CardFilterType = 'today' | 'upcoming' | 'completed' | 'cancelled' | 'noshow' | 'all';
+
 export interface AppointmentFilterParams {
   searchQuery?: string;
   doctorId?: string;
@@ -357,6 +359,8 @@ export interface AppointmentFilterParams {
   startDate?: string; // YYYY-MM-DD
   endDate?: string; // YYYY-MM-DD
   month?: string; // YYYY-MM
+  cardFilter?: CardFilterType;
+  referenceDate?: string;
   page?: number;
   limit?: number;
 }

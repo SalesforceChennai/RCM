@@ -3,21 +3,32 @@ import { pool, checkConnection, initDatabase } from '../db.ts';
 
 interface SeedSummary {
   table: string;
-  count: number;
+  insertedOrUpdated: number;
+  totalInDb: number;
+}
+
+function formatLocalDate(dateObj: Date): string {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export async function runSeed(): Promise<SeedSummary[]> {
   console.log('===============================================================');
-  console.log('🌱 Starting Healthcare RCM PostgreSQL Database Seeding');
+  console.log('🌱 Starting Healthcare RCM Neon PostgreSQL Database Seeding (100 Sample Records)');
   console.log('===============================================================');
 
   const connStatus = await checkConnection();
   if (!connStatus.connected) {
-    throw new Error(`Cannot connect to PostgreSQL database '${connStatus.database}': ${connStatus.error}`);
+    throw new Error(`Cannot connect to Neon PostgreSQL database '${connStatus.database}': ${connStatus.error}`);
   }
 
-  // Ensure tables exist before populating
-  await initDatabase();
+  // Ensure all 14 tables exist
+  const initialized = await initDatabase();
+  if (!initialized) {
+    throw new Error('Failed to initialize database schema before seeding.');
+  }
 
   const client = await pool.connect();
   const summary: SeedSummary[] = [];
@@ -25,30 +36,10 @@ export async function runSeed(): Promise<SeedSummary[]> {
   try {
     await client.query('BEGIN;');
 
-    console.log('🧹 Clearing existing demo data cleanly with CASCADE...');
-    await client.query(`
-      TRUNCATE TABLE
-        payment_predictions,
-        denials,
-        payments,
-        claims,
-        medical_coding,
-        charges,
-        prior_authorizations,
-        insurance,
-        registrations,
-        appointments,
-        doctors,
-        patients,
-        departments,
-        users
-      CASCADE;
-    `);
-
     // =========================================================================
-    // 1. DEPARTMENTS (8 Departments)
+    // 1. DEPARTMENTS (17 Clinical Departments)
     // =========================================================================
-    console.log('🏢 Seeding 17 Clinical Departments...');
+    console.log('🏢 Upserting 17 Clinical Departments...');
     const departments = [
       { id: 'dept-cardio', name: 'Cardiology', icon: 'heart', color: '#EF4444', description: 'Comprehensive heart, cardiovascular & hemodynamic diagnostics and care' },
       { id: 'dept-ortho', name: 'Orthopedics', icon: 'bone', color: '#06B6D4', description: 'Advanced musculoskeletal, joint, spine, and sports medicine rehabilitation' },
@@ -72,16 +63,23 @@ export async function runSeed(): Promise<SeedSummary[]> {
     for (const d of departments) {
       await client.query(
         `INSERT INTO departments (id, name, icon, color, description, status)
-         VALUES ($1, $2, $3, $4, $5, 'Active')`,
+         VALUES ($1, $2, $3, $4, $5, 'Active')
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           icon = EXCLUDED.icon,
+           color = EXCLUDED.color,
+           description = EXCLUDED.description,
+           updated_at = NOW()`,
         [d.id, d.name, d.icon, d.color, d.description]
       );
     }
-    summary.push({ table: 'departments', count: departments.length });
+    const deptTot = await client.query('SELECT COUNT(*)::int AS cnt FROM departments');
+    summary.push({ table: 'departments', insertedOrUpdated: departments.length, totalInDb: deptTot.rows[0].cnt });
 
     // =========================================================================
-    // 2. DOCTORS (15 Doctors)
+    // 2. DOCTORS (36 Medical Providers & Doctors)
     // =========================================================================
-    console.log('👨‍⚕️ Seeding 15 Medical Providers & Doctors...');
+    console.log('👨‍⚕️ Upserting 36 Medical Providers & Doctors...');
     const doctorsData = [
       { id: 'doc-001', name: 'Dr. Arvind Swaminathan', deptId: 'dept-cardio', spec: 'Interventional Cardiology', room: 'Suite 401', exp: '16 Years', hours: { start: '08:30 AM', end: '04:30 PM' } },
       { id: 'doc-002', name: 'Dr. Rajesh Sharma', deptId: 'dept-ortho', spec: 'Joint Replacement & Spine Surgery', room: 'Suite 205', exp: '14 Years', hours: { start: '09:00 AM', end: '05:00 PM' } },
@@ -113,7 +111,7 @@ export async function runSeed(): Promise<SeedSummary[]> {
       { id: 'doc-028', name: 'Dr. Siddharth Verma', deptId: 'dept-pulmo', spec: 'Sleep Medicine, Bronchoscopy & Critical Care', room: 'Suite 306', exp: '14 Years', hours: { start: '09:00 AM', end: '05:00 PM' } },
       { id: 'doc-029', name: 'Dr. Ritu Choudhury', deptId: 'dept-gastro', spec: 'Inflammatory Bowel Disease & Hepatology', room: 'Suite 214', exp: '16 Years', hours: { start: '08:00 AM', end: '04:00 PM' } },
       { id: 'doc-030', name: 'Dr. Manisha Singhania', deptId: 'dept-nephro', spec: 'Kidney Transplantation & Glomerular Diseases', room: 'Suite 410', exp: '13 Years', hours: { start: '09:30 AM', end: '05:30 PM' } },
-      { id: 'doc-031', name: 'Dr. Neil Joseph', deptId: 'dept-emergency', spec: 'Trauma Resuscitation & Emergency Critical Care', room: 'ER Bay 2', exp: '18 Years', hours: { start: '07:00 PM', end: '07:00 AM' } },
+      { id: 'doc-031', name: 'Dr. Neil Joseph', deptId: 'dept-emergency', spec: 'Trauma Resuscitation & Emergency Critical Care', room: 'ER Bay 2', exp: '18 Years', hours: { start: '08:00 AM', end: '06:00 PM' } },
       { id: 'doc-032', name: 'Dr. Anjali Deshpande', deptId: 'dept-ophthal', spec: 'Glaucoma & Vitreoretinal Microsurgery', room: 'Suite 120', exp: '15 Years', hours: { start: '09:00 AM', end: '05:00 PM' } },
       { id: 'doc-033', name: 'Dr. Nikhil Chidambaram', deptId: 'dept-psych', spec: 'Addiction Psychiatry & Mood Disorder Therapy', room: 'Suite 512', exp: '11 Years', hours: { start: '10:30 AM', end: '06:30 PM' } },
       { id: 'doc-034', name: 'Dr. Devendra Bhatt', deptId: 'dept-uro', spec: 'Urologic Oncology & Robotic Kidney Surgery', room: 'Suite 226', exp: '19 Years', hours: { start: '08:30 AM', end: '04:30 PM' } },
@@ -122,10 +120,19 @@ export async function runSeed(): Promise<SeedSummary[]> {
     ];
 
     for (const doc of doctorsData) {
-      const deptObj = departments.find(d => d.id === doc.deptId);
+      const deptObj = departments.find((d) => d.id === doc.deptId);
       await client.query(
         `INSERT INTO doctors (id, name, department_id, department_name, avatar, specialization, working_hours, room_number, experience)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           department_id = EXCLUDED.department_id,
+           department_name = EXCLUDED.department_name,
+           specialization = EXCLUDED.specialization,
+           working_hours = EXCLUDED.working_hours,
+           room_number = EXCLUDED.room_number,
+           experience = EXCLUDED.experience,
+           updated_at = NOW()`,
         [
           doc.id,
           doc.name,
@@ -135,16 +142,17 @@ export async function runSeed(): Promise<SeedSummary[]> {
           doc.spec,
           JSON.stringify(doc.hours),
           doc.room,
-          doc.exp
+          doc.exp,
         ]
       );
     }
-    summary.push({ table: 'doctors', count: doctorsData.length });
+    const docTot = await client.query('SELECT COUNT(*)::int AS cnt FROM doctors');
+    summary.push({ table: 'doctors', insertedOrUpdated: doctorsData.length, totalInDb: docTot.rows[0].cnt });
 
     // =========================================================================
-    // 3. PATIENTS (50 Patients)
+    // 3. PATIENTS (100 Sample Patients)
     // =========================================================================
-    console.log('🧑‍🤝‍🧑 Seeding 50 Synthetic Patients...');
+    console.log('🧑‍🤝‍🧑 Upserting 100 Sample Patients...');
     const patientNames = [
       { first: 'Rahul', last: 'Kumar', gender: 'Male', dob: '1984-04-12', blood: 'O+' },
       { first: 'Arun', last: 'Raj', gender: 'Male', dob: '1979-09-23', blood: 'B+' },
@@ -196,32 +204,95 @@ export async function runSeed(): Promise<SeedSummary[]> {
       { first: 'Radha', last: 'Mitchell', gender: 'Female', dob: '1977-08-16', blood: 'B+' },
       { first: 'Kiran', last: 'Bedi', gender: 'Other', dob: '1964-06-09', blood: 'O+' },
       { first: 'Siddharth', last: 'Roy', gender: 'Male', dob: '1998-03-21', blood: 'AB+' },
+      { first: 'Elena', last: 'Vance', gender: 'Female', dob: '1985-09-12', blood: 'A+' },
+      { first: 'Marcus', last: 'Thorne', gender: 'Male', dob: '1975-03-18', blood: 'O-' },
+      { first: 'Sophia', last: 'Martinez', gender: 'Female', dob: '1991-11-27', blood: 'B+' },
+      { first: 'Liam', last: 'OConnor', gender: 'Male', dob: '1987-07-08', blood: 'O+' },
+      { first: 'Olivia', last: 'Bennett', gender: 'Female', dob: '1993-04-19', blood: 'AB+' },
+      { first: 'Ethan', last: 'Brooks', gender: 'Male', dob: '1967-10-30', blood: 'A-' },
+      { first: 'Maya', last: 'Lin', gender: 'Female', dob: '1999-02-05', blood: 'O+' },
+      { first: 'Noah', last: 'Hayes', gender: 'Male', dob: '1978-06-22', blood: 'B-' },
+      { first: 'Isabella', last: 'Rossi', gender: 'Female', dob: '1982-12-14', blood: 'A+' },
+      { first: 'Lucas', last: 'Moreau', gender: 'Male', dob: '1990-08-03', blood: 'O+' },
+      { first: 'Avery', last: 'Morgan', gender: 'Other', dob: '1995-05-17', blood: 'B+' },
+      { first: 'Chloe', last: 'Foster', gender: 'Female', dob: '1974-01-29', blood: 'AB-' },
+      { first: 'Daniel', last: 'Kim', gender: 'Male', dob: '1983-09-09', blood: 'A+' },
+      { first: 'Grace', last: 'Henderson', gender: 'Female', dob: '1961-07-11', blood: 'O-' },
+      { first: 'Benjamin', last: 'Cole', gender: 'Male', dob: '1954-11-25', blood: 'B+' },
+      { first: 'Zoe', last: 'Patel', gender: 'Female', dob: '2001-03-14', blood: 'O+' },
+      { first: 'Henry', last: 'Wallace', gender: 'Male', dob: '1971-04-07', blood: 'A+' },
+      { first: 'Natalie', last: 'Price', gender: 'Female', dob: '1986-08-28', blood: 'B-' },
+      { first: 'Samuel', last: 'Foster', gender: 'Male', dob: '1979-12-01', blood: 'O+' },
+      { first: 'Hannah', last: 'Gomez', gender: 'Female', dob: '1994-06-15', blood: 'AB+' },
+      { first: 'Vikram', last: 'Chauhan', gender: 'Male', dob: '1980-02-20', blood: 'A+' },
+      { first: 'Meera', last: 'Srinivasan', gender: 'Female', dob: '1969-10-12', blood: 'O+' },
+      { first: 'Aditya', last: 'Rao', gender: 'Male', dob: '1992-07-03', blood: 'B+' },
+      { first: 'Nisha', last: 'Malhotra', gender: 'Female', dob: '1988-01-19', blood: 'A-' },
+      { first: 'Karan', last: 'Oberoi', gender: 'Male', dob: '1977-05-26', blood: 'O-' },
+      { first: 'Tanvi', last: 'Desai', gender: 'Female', dob: '1996-09-30', blood: 'B+' },
+      { first: 'Rishi', last: 'Mehta', gender: 'Male', dob: '1983-11-04', blood: 'O+' },
+      { first: 'Shreya', last: 'Banerjee', gender: 'Female', dob: '1990-04-22', blood: 'AB+' },
+      { first: 'Arjun', last: 'Menon', gender: 'Male', dob: '1964-08-18', blood: 'A+' },
+      { first: 'Kriti', last: 'Saxena', gender: 'Female', dob: '1997-12-07', blood: 'B+' },
+      { first: 'Nikhil', last: 'Jain', gender: 'Male', dob: '1981-03-23', blood: 'O+' },
+      { first: 'Aarti', last: 'Kulkarni', gender: 'Female', dob: '1975-06-29', blood: 'A+' },
+      { first: 'Vivek', last: 'Subramanian', gender: 'Male', dob: '1968-09-15', blood: 'B-' },
+      { first: 'Lavanya', last: 'Venkatesh', gender: 'Female', dob: '1993-01-10', blood: 'O+' },
+      { first: 'Pranav', last: 'Gokhale', gender: 'Male', dob: '1987-10-02', blood: 'AB-' },
+      { first: 'Simran', last: 'Gill', gender: 'Female', dob: '1995-07-16', blood: 'A+' },
+      { first: 'Rohan', last: 'Chatterjee', gender: 'Male', dob: '1973-02-28', blood: 'O-' },
+      { first: 'Aparna', last: 'Bhattacharya', gender: 'Female', dob: '1984-05-06', blood: 'B+' },
+      { first: 'Tarun', last: 'Khanna', gender: 'Male', dob: '1959-11-19', blood: 'O+' },
+      { first: 'Sonia', last: 'Mirza', gender: 'Female', dob: '1989-08-24', blood: 'A+' },
+      { first: 'Dev', last: 'Anand', gender: 'Male', dob: '1966-04-11', blood: 'B+' },
+      { first: 'Ishita', last: 'Dutta', gender: 'Female', dob: '1991-12-13', blood: 'O+' },
+      { first: 'Kabir', last: 'Bedi', gender: 'Male', dob: '1976-03-07', blood: 'A-' },
+      { first: 'Niharika', last: 'Singh', gender: 'Female', dob: '1998-06-21', blood: 'AB+' },
+      { first: 'Yash', last: 'Chawla', gender: 'Male', dob: '1985-09-29', blood: 'O+' },
+      { first: 'Trisha', last: 'Krishnan', gender: 'Female', dob: '1982-01-14', blood: 'B+' },
+      { first: 'Kunal', last: 'Kapoor', gender: 'Male', dob: '1970-07-25', blood: 'A+' },
+      { first: 'Dia', last: 'Mirza', gender: 'Female', dob: '1986-10-18', blood: 'O+' },
+      { first: 'Farhan', last: 'Akhtar', gender: 'Male', dob: '1974-05-09', blood: 'B-' },
+      { first: 'Vidya', last: 'Balan', gender: 'Female', dob: '1979-02-01', blood: 'O+' },
     ];
 
     const patients: any[] = [];
     for (let i = 0; i < patientNames.length; i++) {
       const p = patientNames[i];
       const id = `pat-${String(i + 1).padStart(3, '0')}`;
-      const patientId = `PAT-${1000 + i + 1}`;
+      const patientId = `PAT-${1001 + i}`;
       const phone = `+1 (555) ${String(200 + i).padStart(3, '0')}-${String(1000 + i * 17).slice(0, 4)}`;
-      const email = `${p.first.toLowerCase()}.${p.last.toLowerCase()}@example.com`;
+      const email = `${p.first.toLowerCase()}.${p.last.toLowerCase()}${i >= 50 ? i : ''}@example.com`;
       const address = `${100 + i * 12} Healthcare Blvd, Suite ${10 + (i % 20)}, Metro City, CA 90210`;
-      const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(p.first + p.last)}`;
+      const avatar = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(p.first + p.last + i)}`;
       const emContact = `${p.first} Kin: +1 (555) 900-${String(1000 + i * 11).slice(0, 4)}`;
 
       await client.query(
         `INSERT INTO patients (id, patient_id, first_name, last_name, dob, gender, phone, email, address, avatar, blood_group, emergency_contact)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (id) DO UPDATE SET
+           first_name = EXCLUDED.first_name,
+           last_name = EXCLUDED.last_name,
+           dob = EXCLUDED.dob,
+           gender = EXCLUDED.gender,
+           phone = EXCLUDED.phone,
+           email = EXCLUDED.email,
+           address = EXCLUDED.address,
+           avatar = EXCLUDED.avatar,
+           blood_group = EXCLUDED.blood_group,
+           emergency_contact = EXCLUDED.emergency_contact,
+           updated_at = NOW()`,
         [id, patientId, p.first, p.last, p.dob, p.gender, phone, email, address, avatar, p.blood, emContact]
       );
       patients.push({ id, patientId, ...p, phone, email, address, avatar, emContact });
     }
-    summary.push({ table: 'patients', count: patients.length });
+    const patTot = await client.query('SELECT COUNT(*)::int AS cnt FROM patients');
+    summary.push({ table: 'patients', insertedOrUpdated: patients.length, totalInDb: patTot.rows[0].cnt });
 
     // =========================================================================
-    // 4. REGISTRATIONS (50 Registrations - Exactly 1 per Patient)
+    // 4. REGISTRATIONS (100 Patient Registrations - 1:1 with Sample Patients)
     // =========================================================================
-    console.log('📝 Seeding 50 Patient Registrations (1:1 with Patients)...');
+    console.log('📝 Upserting 100 Patient Registrations...');
     const idTypes = ['National ID', 'Driver License', 'Passport', 'State ID'];
     const relationships = ['Spouse', 'Child', 'Parent', 'Sibling', 'Friend'];
 
@@ -231,18 +302,29 @@ export async function runSeed(): Promise<SeedSummary[]> {
       const idType = idTypes[i % idTypes.length];
       const idNum = `ID-${idType.slice(0, 2).toUpperCase()}-${String(880000 + i * 143)}`;
       const rel = relationships[i % relationships.length];
-      const status = i < 40 ? 'Registered' : i < 47 ? 'Verified' : 'Pending';
-      const regDate = `2026-0${1 + (i % 8)}-${String(10 + (i % 18)).padStart(2, '0')}`;
+      const status = i < 80 ? 'Registered' : i < 94 ? 'Verified' : 'Pending';
+      const regDateObj = new Date(Date.now() - (i % 60) * 86400000);
+      const regDate = formatLocalDate(regDateObj);
 
       await client.query(
         `INSERT INTO registrations (
           id, patient_id, appointment_id, id_type, id_number, emergency_contact_name,
           emergency_contact_relationship, emergency_contact_phone, registration_date, registration_status, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (patient_id) DO UPDATE SET
+          id_type = EXCLUDED.id_type,
+          id_number = EXCLUDED.id_number,
+          emergency_contact_name = EXCLUDED.emergency_contact_name,
+          emergency_contact_relationship = EXCLUDED.emergency_contact_relationship,
+          emergency_contact_phone = EXCLUDED.emergency_contact_phone,
+          registration_date = EXCLUDED.registration_date,
+          registration_status = EXCLUDED.registration_status,
+          notes = EXCLUDED.notes,
+          updated_at = NOW()`,
         [
           regId,
           p.id,
-          null, // linked later if needed
+          null,
           idType,
           idNum,
           `${p.last} Emergency Contact`,
@@ -250,16 +332,17 @@ export async function runSeed(): Promise<SeedSummary[]> {
           `+1 (555) 888-${String(1000 + i * 19).slice(0, 4)}`,
           regDate,
           status,
-          `Identity verified via ${idType}. Consent and HIPAA forms signed electronically.`
+          `Identity verified via ${idType}. Consent and HIPAA forms signed electronically.`,
         ]
       );
     }
-    summary.push({ table: 'registrations', count: patients.length });
+    const regTot = await client.query('SELECT COUNT(*)::int AS cnt FROM registrations');
+    summary.push({ table: 'registrations', insertedOrUpdated: patients.length, totalInDb: regTot.rows[0].cnt });
 
     // =========================================================================
-    // 5. INSURANCE (50 Insurance Records - 1 per Patient)
+    // 5. INSURANCE (100 Insurance Records - 1 per Sample Patient)
     // =========================================================================
-    console.log('🛡️ Seeding 50 Insurance Eligibility Records...');
+    console.log('🛡️ Upserting 100 Insurance Eligibility Records...');
     const payers = [
       { name: 'Blue Cross Blue Shield', group: 'GRP-BCBS-8821', copay: 25, ded: 1000, coin: 15 },
       { name: 'UnitedHealthcare', group: 'GRP-UHC-4402', copay: 35, ded: 1500, coin: 20 },
@@ -277,23 +360,41 @@ export async function runSeed(): Promise<SeedSummary[]> {
       const insId = `ins-${String(i + 1).padStart(3, '0')}`;
       const memberId = `MEM-${payer.name.slice(0, 3).toUpperCase()}-${String(450000 + i * 291)}`;
       const policyNumber = `POL-${String(9000000 + i * 431)}`;
-      const status = i < 42 ? 'Active' : i < 47 ? 'Pending Verification' : 'Expired';
+      const status = i < 82 ? 'Active' : i < 93 ? 'Pending Verification' : 'Expired';
       const eligibility = status === 'Active' ? 'Eligible' : status === 'Pending Verification' ? 'Pending' : 'Not Eligible';
+      const providerStatus = status === 'Active' ? 'Accepted' : status === 'Pending Verification' ? 'Pending' : 'Declined';
 
       const coveredServices = [
         'Outpatient Consultation',
         'Diagnostic Imaging',
         'Laboratory Services',
         'Emergency Treatment',
-        'Preventive Health Screenings'
+        'Preventive Health Screenings',
       ];
 
       const verResult = {
         isVerified: status === 'Active',
-        verifiedAt: new Date(Date.now() - (i * 86400000)).toISOString(),
+        verifiedAt: new Date(Date.now() - i * 86400000).toISOString(),
         message: status === 'Active' ? 'Coverage active and 100% verified via EDI 270/271' : 'Eligibility pending insurer confirmation',
-        providerStatus: status === 'Active' ? 'Accepted' : 'Pending'
+        providerStatus,
       };
+
+      const billingBreakdown = [
+        {
+          id: `bill-${i}-1`,
+          serviceDescription: 'Outpatient Specialist Consultation',
+          procedureCode: 'CPT-99214',
+          diagnosisCode: 'ICD-10-I10',
+          amount: 450,
+        },
+        {
+          id: `bill-${i}-2`,
+          serviceDescription: 'Comprehensive Diagnostic & Lab Panel',
+          procedureCode: 'CPT-80053',
+          diagnosisCode: 'ICD-10-Z00.00',
+          amount: 800,
+        },
+      ];
 
       await client.query(
         `INSERT INTO insurance (
@@ -301,8 +402,18 @@ export async function runSeed(): Promise<SeedSummary[]> {
           policy_holder_name, relationship_to_patient, group_number, effective_date,
           expiry_date, insurance_status, eligibility_status, coverage_status,
           copay_amount, deductible, coinsurance, covered_services, verification_result,
-          provider_status, treatment_amount, requested_amount, patient_responsibility_amount
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+          provider_status, provider_status_checked_at, provider_status_reason,
+          treatment_amount, requested_amount, patient_responsibility_amount, billing_breakdown
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+        ON CONFLICT (id) DO UPDATE SET
+          insurance_provider = EXCLUDED.insurance_provider,
+          member_id = EXCLUDED.member_id,
+          policy_number = EXCLUDED.policy_number,
+          insurance_status = EXCLUDED.insurance_status,
+          eligibility_status = EXCLUDED.eligibility_status,
+          provider_status = EXCLUDED.provider_status,
+          billing_breakdown = EXCLUDED.billing_breakdown,
+          updated_at = NOW()`,
         [
           insId,
           p.id,
@@ -313,7 +424,7 @@ export async function runSeed(): Promise<SeedSummary[]> {
           'Self',
           payer.group,
           '2026-01-01',
-          '2026-12-31',
+          status === 'Expired' ? '2026-06-30' : '2027-12-31',
           status,
           eligibility,
           status === 'Active' ? 'Comprehensive Commercial In-Network' : 'Under Review',
@@ -322,37 +433,57 @@ export async function runSeed(): Promise<SeedSummary[]> {
           payer.coin,
           JSON.stringify(coveredServices),
           JSON.stringify(verResult),
-          verResult.providerStatus,
-          1250.00,
-          1050.00,
-          200.00
+          providerStatus,
+          new Date(),
+          status === 'Active'
+            ? 'Insurance provider contract verified and active on real-time payer clearinghouse.'
+            : 'Verification awaiting clearinghouse confirmation.',
+          1250.0,
+          1050.0,
+          200.0,
+          JSON.stringify(billingBreakdown),
         ]
       );
       insuranceList.push({ id: insId, patientId: p.id, payer: payer.name, memberId, policyNumber, copay: payer.copay, coin: payer.coin });
     }
-    summary.push({ table: 'insurance', count: patients.length });
+    const insTot = await client.query('SELECT COUNT(*)::int AS cnt FROM insurance');
+    summary.push({ table: 'insurance', insertedOrUpdated: patients.length, totalInDb: insTot.rows[0].cnt });
 
     // =========================================================================
-    // 6. APPOINTMENTS (75 Appointments)
+    // 6. APPOINTMENTS (100 Sample Appointments across Today, Past & Future)
     // =========================================================================
-    console.log('📅 Seeding 75 Interconnected Appointments...');
+    console.log('📅 Upserting 100 Interconnected Appointments...');
     const appointmentTypes = ['Consultation', 'Follow-up', 'Routine Checkup', 'Specialist Consultation', 'Emergency'];
-    const times = ['09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '02:00 PM', '02:30 PM', '03:15 PM', '04:00 PM'];
+    const times = ['09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM', '02:00 PM', '02:30 PM', '03:00 PM', '03:30 PM', '04:00 PM'];
 
     const appointments: any[] = [];
-    for (let i = 0; i < 75; i++) {
+    for (let i = 0; i < 100; i++) {
       const aptId = `apt-${String(i + 1).padStart(3, '0')}`;
       const code = `APT${10001 + i}`;
       const patient = patients[i % patients.length];
       const doctor = doctorsData[i % doctorsData.length];
-      const dept = departments.find(d => d.id === doctor.deptId) || departments[0];
+      const dept = departments.find((d) => d.id === doctor.deptId) || departments[0];
 
-      // Distribution: 45 Completed, 15 Confirmed, 8 Scheduled, 4 Cancelled, 3 No-show
-      const status = i < 45 ? 'Completed' : i < 60 ? 'Confirmed' : i < 68 ? 'Scheduled' : i < 72 ? 'Cancelled' : 'No-show';
+      // Distribution:
+      // 0..11 (12): Today (10 Confirmed/Scheduled, 2 Completed)
+      // 12..55 (44): Past 1..25 days (36 Completed, 4 Cancelled, 4 No-show)
+      // 56..99 (44): Upcoming +1..+25 days (28 Confirmed, 13 Scheduled, 3 Cancelled)
+      let dayOffset = 0;
+      let status = 'Confirmed';
+      if (i < 12) {
+        dayOffset = 0;
+        status = i < 2 ? 'Completed' : i < 8 ? 'Confirmed' : 'Scheduled';
+      } else if (i < 56) {
+        dayOffset = -1 - ((i - 12) % 25);
+        status = i < 48 ? 'Completed' : i < 52 ? 'Cancelled' : 'No-show';
+      } else {
+        dayOffset = 1 + ((i - 56) % 25);
+        status = i < 84 ? 'Confirmed' : i < 97 ? 'Scheduled' : 'Cancelled';
+      }
+
       const aptType = appointmentTypes[i % appointmentTypes.length];
-      const dayOffset = (i < 45 ? -(45 - i) : (i - 45)) * 2;
-      const aptDateObj = new Date(Date.now() + (dayOffset * 86400000));
-      const aptDate = aptDateObj.toISOString().split('T')[0];
+      const aptDateObj = new Date(Date.now() + dayOffset * 86400000);
+      const aptDate = formatLocalDate(aptDateObj);
       const aptTime = times[i % times.length];
 
       await client.query(
@@ -360,7 +491,17 @@ export async function runSeed(): Promise<SeedSummary[]> {
           id, appointment_code, patient_id, doctor_id, department_id, department_name,
           appointment_date, appointment_time, duration_minutes, appointment_type, status,
           reason_for_visit, notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ON CONFLICT (id) DO UPDATE SET
+          patient_id = EXCLUDED.patient_id,
+          doctor_id = EXCLUDED.doctor_id,
+          department_id = EXCLUDED.department_id,
+          department_name = EXCLUDED.department_name,
+          appointment_date = EXCLUDED.appointment_date,
+          appointment_time = EXCLUDED.appointment_time,
+          appointment_type = EXCLUDED.appointment_type,
+          status = EXCLUDED.status,
+          updated_at = NOW()`,
         [
           aptId,
           code,
@@ -374,41 +515,45 @@ export async function runSeed(): Promise<SeedSummary[]> {
           aptType,
           status,
           `Clinical evaluation for ${dept.name.toLowerCase()} presenting symptoms.`,
-          `Patient intake registered. Vitals recorded by triage nurse.`
+          `Patient intake registered. Vitals recorded by triage nurse.`,
         ]
       );
       appointments.push({ id: aptId, code, patientId: patient.id, doctorId: doctor.id, deptId: dept.id, deptName: dept.name, date: aptDate, status });
     }
-    summary.push({ table: 'appointments', count: appointments.length });
+    const aptTot = await client.query('SELECT COUNT(*)::int AS cnt FROM appointments');
+    summary.push({ table: 'appointments', insertedOrUpdated: appointments.length, totalInDb: aptTot.rows[0].cnt });
 
     // =========================================================================
-    // 7. PRIOR AUTHORIZATIONS (30 Records)
+    // 7. PRIOR AUTHORIZATIONS (100 Sample Records)
     // =========================================================================
-    console.log('📑 Seeding 30 Prior Authorization Records...');
+    console.log('📑 Upserting 100 Prior Authorization Records...');
     const paServices = [
-      { name: 'MRI Brain with and without contrast', cpt: '70553', icd: 'R51.0', cost: 1850 },
-      { name: 'Knee Diagnostic & Surgical Arthroscopy', cpt: '29881', icd: 'M17.11', cost: 3200 },
-      { name: 'Coronary Computed Tomography Angiography', cpt: '75574', icd: 'I25.10', cost: 2400 },
-      { name: 'Spine Lumbar MRI without contrast', cpt: '72148', icd: 'M54.5', cost: 1450 },
-      { name: 'Endoscopic Sinus Surgery with Biopsy', cpt: '31237', icd: 'J32.9', cost: 2800 },
-      { name: 'Echocardiography with Doppler Complete', cpt: '93306', icd: 'I50.9', cost: 950 },
+      { name: 'MRI Brain with and without contrast', cpt: 'CPT 70553', icd: 'ICD R51.0', cost: 1850 },
+      { name: 'Knee Diagnostic & Surgical Arthroscopy', cpt: 'CPT 29881', icd: 'ICD M17.11', cost: 3200 },
+      { name: 'Coronary Computed Tomography Angiography', cpt: 'CPT 75574', icd: 'ICD I25.10', cost: 2400 },
+      { name: 'Spine Lumbar MRI without contrast', cpt: 'CPT 72148', icd: 'ICD M54.5', cost: 1450 },
+      { name: 'Endoscopic Sinus Surgery with Biopsy', cpt: 'CPT 31237', icd: 'ICD J32.9', cost: 2800 },
+      { name: 'Echocardiography with Doppler Complete', cpt: 'CPT 93306', icd: 'ICD I50.9', cost: 950 },
     ];
 
     const priorAuths: any[] = [];
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 100; i++) {
       const paId = `pa-${String(i + 1).padStart(3, '0')}`;
-      const reqId = `PA-REQ-${20000 + i}`;
+      const reqId = `PA-${10001 + i}`;
       const patient = patients[i % patients.length];
       const apt = appointments[i % appointments.length];
       const doc = doctorsData[i % doctorsData.length];
-      const ins = insuranceList.find(item => item.patientId === patient.id) || insuranceList[0];
+      const ins = insuranceList.find((item) => item.patientId === patient.id) || insuranceList[0];
       const serv = paServices[i % paServices.length];
-      
-      // Status: 20 Approved, 6 Pending, 3 Denied, 1 Draft
-      const status = i < 20 ? 'Approved' : i < 26 ? 'Pending' : i < 29 ? 'Denied' : 'Draft';
-      const authNum = status === 'Approved' ? `AUTH-BCBS-${77000 + i}` : null;
-      const validFrom = status === 'Approved' ? '2026-02-01' : null;
-      const validUntil = status === 'Approved' ? '2026-08-01' : null;
+
+      // Status: 65 Approved, 18 Pending, 10 Denied, 7 Not Required
+      const status = i < 65 ? 'Approved' : i < 83 ? 'Pending' : i < 93 ? 'Denied' : 'Not Required';
+      const authRequired = status !== 'Not Required';
+      const authNum = status === 'Approved' ? `AUTH-PAY-${77000 + i}` : null;
+      const reqDate = formatLocalDate(new Date(Date.now() - ((i % 20) + 5) * 86400000));
+      const srvDate = formatLocalDate(new Date(Date.now() + ((i % 15) + 2) * 86400000));
+      const validFrom = status === 'Approved' ? reqDate : null;
+      const validUntil = status === 'Approved' ? formatLocalDate(new Date(Date.now() + 90 * 86400000)) : null;
 
       await client.query(
         `INSERT INTO prior_authorizations (
@@ -416,10 +561,16 @@ export async function runSeed(): Promise<SeedSummary[]> {
           procedure_code, diagnosis_code, doctor_id, doctor_name, department_id, department_name,
           insurance_provider, member_id, policy_number, request_date, service_date,
           estimated_cost, medical_justification, supporting_documents, authorization_required,
-          status, authorization_number, approved_date, valid_from, valid_until, denial_reason, notes
+          status, authorization_number, approved_date, valid_from, valid_until,
+          denial_reason, suggested_action, notes
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
-        )`,
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+          $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          status = EXCLUDED.status,
+          authorization_number = EXCLUDED.authorization_number,
+          updated_at = NOW()`,
         [
           paId,
           reqId,
@@ -435,29 +586,31 @@ export async function runSeed(): Promise<SeedSummary[]> {
           ins.payer,
           ins.memberId,
           ins.policyNumber,
-          '2026-02-10',
-          '2026-02-25',
+          reqDate,
+          srvDate,
           serv.cost,
-          `Conservative medical management failed. Diagnostic intervention medically necessary per NCCN / AHA guidelines.`,
-          JSON.stringify(['Physician_Clinical_Notes.pdf', 'Radiology_Initial_Xray.pdf']),
-          true,
+          `Conservative medical management completed. Diagnostic intervention medically necessary per clinical guidelines.`,
+          JSON.stringify(['Physician_Clinical_Notes.pdf', 'Radiology_Initial_Report.pdf']),
+          authRequired,
           status,
           authNum,
-          status === 'Approved' ? '2026-02-14' : null,
+          status === 'Approved' ? reqDate : null,
           validFrom,
           validUntil,
           status === 'Denied' ? 'Criteria for medical necessity not met under current commercial policy guidelines.' : null,
-          'Processed through Electronic Prior Authorization (ePA) Portal.'
+          status === 'Denied' ? 'Initiate Peer-to-Peer physician appeal with supplementary diagnostic records.' : null,
+          'Processed through Electronic Prior Authorization (ePA) Portal.',
         ]
       );
       priorAuths.push({ id: paId, reqId, patientId: patient.id, service: serv.name, cpt: serv.cpt, icd: serv.icd, status, cost: serv.cost });
     }
-    summary.push({ table: 'prior_authorizations', count: priorAuths.length });
+    const paTot = await client.query('SELECT COUNT(*)::int AS cnt FROM prior_authorizations');
+    summary.push({ table: 'prior_authorizations', insertedOrUpdated: priorAuths.length, totalInDb: paTot.rows[0].cnt });
 
     // =========================================================================
     // 8. CHARGES (100 Charge Encounters with items and financial logic)
     // =========================================================================
-    console.log('💳 Seeding 100 Charge Capture Encounters with Realistic Financials...');
+    console.log('💳 Upserting 100 Charge Capture Encounters...');
     const clinicalProcedures = [
       { code: '99213', desc: 'Office outpatient visit established, low complexity', rate: 140, cat: 'Consultation' },
       { code: '99214', desc: 'Office outpatient visit established, moderate complexity', rate: 220, cat: 'Consultation' },
@@ -492,21 +645,18 @@ export async function runSeed(): Promise<SeedSummary[]> {
       const patient = patients[i % patients.length];
       const apt = appointments[i % appointments.length];
       const doc = doctorsData[i % doctorsData.length];
-      const ins = insuranceList.find(item => item.patientId === patient.id) || insuranceList[0];
+      const ins = insuranceList.find((item) => item.patientId === patient.id) || insuranceList[0];
       const proc1 = clinicalProcedures[i % clinicalProcedures.length];
       const proc2 = clinicalProcedures[(i + 3) % clinicalProcedures.length];
       const diag = diagnosisList[i % diagnosisList.length];
 
       const item1Total = proc1.rate;
-      const item2Total = (i % 3 === 0) ? proc2.rate : 0;
+      const item2Total = i % 3 === 0 ? proc2.rate : 0;
       const totalCharge = item1Total + item2Total;
 
-      // Realistic reimbursement: Insurance covers ~75-80%
       const expectedIns = Math.round(totalCharge * 0.78 * 100) / 100;
       const patientResp = Math.round((totalCharge - expectedIns) * 100) / 100;
 
-      // Status distributions
-      // 0-55 Paid in Full, 56-75 Partial Payment, 76-90 Billed, 91-99 Draft/Ready
       let claimStatus = 'Paid in Full';
       let insReceived = expectedIns;
       let insPending = 0;
@@ -515,9 +665,9 @@ export async function runSeed(): Promise<SeedSummary[]> {
 
       if (i >= 55 && i < 75) {
         claimStatus = 'Partial Paid';
-        insReceived = Math.round(expectedIns * 0.70 * 100) / 100;
+        insReceived = Math.round(expectedIns * 0.7 * 100) / 100;
         insPending = Math.round((expectedIns - insReceived) * 100) / 100;
-        patPaid = ins.copay;
+        patPaid = Math.min(patientResp, ins.copay);
         patPending = Math.round((patientResp - patPaid) * 100) / 100;
       } else if (i >= 75 && i < 90) {
         claimStatus = 'Billed';
@@ -547,12 +697,12 @@ export async function runSeed(): Promise<SeedSummary[]> {
           totalCharge: item1Total,
           insuranceExpected: Math.round(item1Total * 0.78 * 100) / 100,
           patientExpected: Math.round(item1Total * 0.22 * 100) / 100,
-          insurancePaid: (insReceived > 0) ? Math.round(item1Total * 0.78 * (insReceived / expectedIns) * 100) / 100 : 0,
-          patientPaid: (patPaid > 0) ? Math.round(item1Total * 0.22 * (patPaid / (patientResp || 1)) * 100) / 100 : 0,
+          insurancePaid: insReceived > 0 ? Math.round(item1Total * 0.78 * (insReceived / expectedIns) * 100) / 100 : 0,
+          patientPaid: patPaid > 0 ? Math.round(item1Total * 0.22 * (patPaid / (patientResp || 1)) * 100) / 100 : 0,
           pendingAmount: Math.round((item1Total - ((insReceived > 0 ? item1Total * 0.78 : 0) + (patPaid > 0 ? item1Total * 0.22 : 0))) * 100) / 100,
           codingStatus: 'Coded',
-          billingStatus: claimStatus === 'Paid in Full' ? 'Paid in Full' : 'Pending'
-        }
+          billingStatus: claimStatus === 'Paid in Full' ? 'Paid in Full' : 'Pending',
+        },
       ];
 
       if (item2Total > 0) {
@@ -567,11 +717,11 @@ export async function runSeed(): Promise<SeedSummary[]> {
           totalCharge: item2Total,
           insuranceExpected: Math.round(item2Total * 0.78 * 100) / 100,
           patientExpected: Math.round(item2Total * 0.22 * 100) / 100,
-          insurancePaid: (insReceived > 0) ? Math.round(item2Total * 0.78 * (insReceived / expectedIns) * 100) / 100 : 0,
-          patientPaid: (patPaid > 0) ? Math.round(item2Total * 0.22 * (patPaid / (patientResp || 1)) * 100) / 100 : 0,
+          insurancePaid: insReceived > 0 ? Math.round(item2Total * 0.78 * (insReceived / expectedIns) * 100) / 100 : 0,
+          patientPaid: patPaid > 0 ? Math.round(item2Total * 0.22 * (patPaid / (patientResp || 1)) * 100) / 100 : 0,
           pendingAmount: Math.round((item2Total - ((insReceived > 0 ? item2Total * 0.78 : 0) + (patPaid > 0 ? item2Total * 0.22 : 0))) * 100) / 100,
           codingStatus: 'Coded',
-          billingStatus: claimStatus === 'Paid in Full' ? 'Paid in Full' : 'Pending'
+          billingStatus: claimStatus === 'Paid in Full' ? 'Paid in Full' : 'Pending',
         });
       }
 
@@ -582,10 +732,10 @@ export async function runSeed(): Promise<SeedSummary[]> {
           source: 'Insurance',
           paymentType: 'Electronic Remittance Advice (835)',
           amount: insReceived,
-          paymentDate: '2026-03-01',
+          paymentDate: formatLocalDate(new Date()),
           status: 'Completed',
           referenceNumber: `ERA-${ins.memberId.slice(-5)}-${900 + i}`,
-          notes: 'Auto-posted remittance from commercial payer'
+          notes: 'Auto-posted remittance from commercial payer',
         });
       }
       if (patPaid > 0) {
@@ -594,10 +744,10 @@ export async function runSeed(): Promise<SeedSummary[]> {
           source: 'Patient',
           paymentType: 'Credit Card / Copay',
           amount: patPaid,
-          paymentDate: '2026-02-28',
+          paymentDate: formatLocalDate(new Date()),
           status: 'Completed',
           referenceNumber: `CC-TRANS-${5000 + i}`,
-          notes: 'Point of service copay collected at reception'
+          notes: 'Point of service copay collected at reception',
         });
       }
 
@@ -611,7 +761,15 @@ export async function runSeed(): Promise<SeedSummary[]> {
           patient_pending, total_outstanding_ar, notes
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25
-        )`,
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          items = EXCLUDED.items,
+          payments = EXCLUDED.payments,
+          total_charges = EXCLUDED.total_charges,
+          insurance_received = EXCLUDED.insurance_received,
+          total_outstanding_ar = EXCLUDED.total_outstanding_ar,
+          claim_status = EXCLUDED.claim_status,
+          updated_at = NOW()`,
         [
           chargeId,
           patient.id,
@@ -637,7 +795,7 @@ export async function runSeed(): Promise<SeedSummary[]> {
           patPaid,
           patPending,
           totalAR,
-          `Encounter verified. Coding and financial audit performed.`
+          `Encounter verified. Coding and financial audit performed.`,
         ]
       );
 
@@ -664,36 +822,39 @@ export async function runSeed(): Promise<SeedSummary[]> {
         primaryIcdDesc: diag.desc,
         claimStatus,
         date: apt.date,
-        items
+        items,
       });
     }
-    summary.push({ table: 'charges', count: chargeEncounters.length });
+    const chgTot = await client.query('SELECT COUNT(*)::int AS cnt FROM charges');
+    summary.push({ table: 'charges', insertedOrUpdated: chargeEncounters.length, totalInDb: chgTot.rows[0].cnt });
 
     // =========================================================================
     // 9. MEDICAL CODING (100 Records matching encounters)
     // =========================================================================
-    console.log('🩺 Seeding 100 Medical Coding Records...');
+    console.log('🩺 Upserting 100 Medical Coding Records...');
     for (let i = 0; i < chargeEncounters.length; i++) {
       const enc = chargeEncounters[i];
       const codingId = `cod-${String(i + 1).padStart(3, '0')}`;
 
       const diagnoses = [
         { id: `diag-${i}-1`, type: 'Primary', code: enc.primaryIcd, description: enc.primaryIcdDesc, status: 'Validated', isPrimary: true },
-        { id: `diag-${i}-2`, type: 'Secondary', code: 'Z00.00', description: 'Encounter for general medical examination', status: 'Validated', isPrimary: false }
+        { id: `diag-${i}-2`, type: 'Secondary', code: 'Z00.00', description: 'Encounter for general medical examination', status: 'Validated', isPrimary: false },
       ];
 
       const procedures = enc.items.map((it: any, pIdx: number) => ({
         id: `proc-${i}-${pIdx}`,
+        serviceId: it.id,
         serviceDescription: it.serviceDescription,
         cptCode: it.procedureCode,
+        modifier: '—',
         units: it.quantity,
         chargeAmount: it.totalCharge,
-        codingStatus: 'Completed'
+        codingStatus: 'Completed',
       }));
 
       const valMessages = [
         { id: `val-${i}-1`, level: 'Complete', title: 'CCI Edits Passed', message: 'No unbundled procedure code collisions detected.' },
-        { id: `val-${i}-2`, level: 'Complete', title: 'Medical Necessity Confirmed', message: 'Diagnosis code supports documented procedure code per CMS LCD.' }
+        { id: `val-${i}-2`, level: 'Complete', title: 'Medical Necessity Confirmed', message: 'Diagnosis code supports documented procedure code per CMS LCD.' },
       ];
 
       await client.query(
@@ -703,7 +864,12 @@ export async function runSeed(): Promise<SeedSummary[]> {
           services, diagnoses, procedures, coding_status, validation_messages, notes
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
-        )`,
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          services = EXCLUDED.services,
+          diagnoses = EXCLUDED.diagnoses,
+          procedures = EXCLUDED.procedures,
+          updated_at = NOW()`,
         [
           codingId,
           enc.id,
@@ -712,65 +878,63 @@ export async function runSeed(): Promise<SeedSummary[]> {
           enc.date,
           enc.doctorId,
           enc.doctorName,
-          departments.find(d => d.name === enc.deptName)?.id || 'dept-gen',
+          departments.find((d) => d.name === enc.deptName)?.id || 'dept-gen',
           enc.deptName,
           JSON.stringify(enc.items),
           JSON.stringify(diagnoses),
           JSON.stringify(procedures),
           'READY FOR CLAIM CREATION',
           JSON.stringify(valMessages),
-          'Reviewed and validated by certified medical coder (CPC). Compliant with ICD-10-CM guidelines.'
+          'Reviewed and validated by certified medical coder (CPC). Compliant with ICD-10-CM guidelines.',
         ]
       );
     }
-    summary.push({ table: 'medical_coding', count: chargeEncounters.length });
+    const codTot = await client.query('SELECT COUNT(*)::int AS cnt FROM medical_coding');
+    summary.push({ table: 'medical_coding', insertedOrUpdated: chargeEncounters.length, totalInDb: codTot.rows[0].cnt });
 
     // =========================================================================
     // 10. CLAIMS (100 Claims directly corresponding to encounters)
     // =========================================================================
-    console.log('📑 Seeding 100 Claims with Realistic Risk and Payment Indicators...');
+    console.log('📑 Upserting 100 Claims with Realistic Risk & Payment Indicators...');
+    const claimTypes = ['Outpatient', 'Outpatient', 'Inpatient', 'Emergency', 'Telehealth'];
     const claims: any[] = [];
 
     for (let i = 0; i < chargeEncounters.length; i++) {
       const enc = chargeEncounters[i];
       const claimId = `CLM-${String(100000 + i + 1)}`;
 
-      // Realistic statuses:
-      // i < 55: Approved / Paid
-      // 55 <= i < 75: Processing / Partially Paid
-      // 75 <= i < 88: Submitted / Unpaid
-      // 88 <= i < 100: Denied / Unpaid
       let claimStatus = 'Approved';
       let finalPayment = 'Paid';
       let predictedStatus = 'Paid';
-      let prob = 0.88 + ((i % 10) * 0.01);
+      let prob = 0.88 + (i % 10) * 0.01;
       let riskLevel = 'Low Risk';
 
       if (i >= 55 && i < 75) {
         claimStatus = 'Partially Paid';
         finalPayment = 'Paid';
         predictedStatus = 'Paid';
-        prob = 0.72 + ((i % 8) * 0.01);
+        prob = 0.72 + (i % 8) * 0.01;
         riskLevel = 'Medium Risk';
       } else if (i >= 75 && i < 88) {
         claimStatus = 'Submitted';
         finalPayment = 'Unpaid';
-        predictedStatus = (i % 2 === 0) ? 'Paid' : 'Unpaid';
-        prob = 0.55 + ((i % 6) * 0.03);
+        predictedStatus = i % 2 === 0 ? 'Paid' : 'Unpaid';
+        prob = 0.55 + (i % 6) * 0.03;
         riskLevel = 'Medium Risk';
       } else if (i >= 88) {
         claimStatus = 'Denied';
         finalPayment = 'Unpaid';
         predictedStatus = 'Unpaid';
-        prob = 0.22 + ((i % 5) * 0.03);
+        prob = 0.22 + (i % 5) * 0.03;
         riskLevel = 'High Risk';
       }
 
       const prevClaims = 1 + (i % 7);
       const prevPaid = finalPayment === 'Paid' ? prevClaims : Math.max(0, prevClaims - 2);
       const prevUnpaid = prevClaims - prevPaid;
-      const prevDenials = (riskLevel === 'High Risk') ? 2 : (riskLevel === 'Medium Risk') ? 1 : 0;
+      const prevDenials = riskLevel === 'High Risk' ? 2 : riskLevel === 'Medium Risk' ? 1 : 0;
       const daysSince = 5 + (i % 45);
+      const claimType = claimTypes[i % claimTypes.length];
 
       await client.query(
         `INSERT INTO claims (
@@ -782,7 +946,15 @@ export async function runSeed(): Promise<SeedSummary[]> {
           payment_probability, risk_level, claim_status, submission_date
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
-        )`,
+        )
+        ON CONFLICT (claim_id) DO UPDATE SET
+          claim_amount = EXCLUDED.claim_amount,
+          final_payment_status = EXCLUDED.final_payment_status,
+          predicted_status = EXCLUDED.predicted_status,
+          payment_probability = EXCLUDED.payment_probability,
+          risk_level = EXCLUDED.risk_level,
+          claim_status = EXCLUDED.claim_status,
+          updated_at = NOW()`,
         [
           claimId,
           enc.patientId,
@@ -793,9 +965,9 @@ export async function runSeed(): Promise<SeedSummary[]> {
           enc.doctorName,
           enc.insPayer,
           enc.totalCharge,
-          enc.primaryCpt,
+          `CPT ${enc.primaryCpt}`,
           enc.primaryCptDesc,
-          enc.primaryIcd,
+          `ICD-10 ${enc.primaryIcd}`,
           enc.primaryIcdDesc,
           enc.items.length,
           prevClaims,
@@ -804,13 +976,13 @@ export async function runSeed(): Promise<SeedSummary[]> {
           prevDenials,
           enc.totalAR,
           daysSince,
-          'Outpatient',
+          claimType,
           finalPayment,
           predictedStatus,
           prob,
           riskLevel,
           claimStatus,
-          new Date(Date.now() - (daysSince * 86400000)).toISOString()
+          new Date(Date.now() - daysSince * 86400000).toISOString(),
         ]
       );
 
@@ -827,25 +999,32 @@ export async function runSeed(): Promise<SeedSummary[]> {
         riskLevel,
         insReceived: enc.insReceived,
         patPaid: enc.patPaid,
-        totalAR: enc.totalAR
+        totalAR: enc.totalAR,
       });
     }
-    summary.push({ table: 'claims', count: claims.length });
+    const clmTot = await client.query('SELECT COUNT(*)::int AS cnt FROM claims');
+    summary.push({ table: 'claims', insertedOrUpdated: claims.length, totalInDb: clmTot.rows[0].cnt });
 
     // =========================================================================
-    // 11. PAYMENTS (100 Real Payment Transactions)
+    // 11. PAYMENTS (100 Payment Transactions)
     // =========================================================================
-    console.log('💵 Seeding 100 Payment Transactions...');
+    console.log('💵 Upserting 100 Payment Transactions...');
     for (let i = 0; i < claims.length; i++) {
       const cl = claims[i];
       const payId = `pay-${String(i + 1).padStart(3, '0')}`;
-      
-      const isInsurancePayer = (i % 3 !== 0);
+
+      const isInsurancePayer = i % 3 !== 0;
       const payer = isInsurancePayer ? cl.insPayer : 'Patient Direct Payment';
       const source = isInsurancePayer ? 'Insurance' : 'Patient';
       const payType = isInsurancePayer ? 'Electronic Funds Transfer (EFT)' : 'Credit Card / Online Portal';
-      const payAmt = isInsurancePayer ? (cl.insReceived > 0 ? cl.insReceived : Math.round(cl.totalCharge * 0.78 * 100) / 100) : (cl.patPaid > 0 ? cl.patPaid : 25.00);
-      const status = cl.finalPayment === 'Paid' ? 'Completed' : (i % 2 === 0 ? 'Pending' : 'Partial Paid');
+      const payAmt = isInsurancePayer
+        ? cl.insReceived > 0
+          ? cl.insReceived
+          : Math.round(cl.totalCharge * 0.78 * 100) / 100
+        : cl.patPaid > 0
+        ? cl.patPaid
+        : 25.0;
+      const status = cl.finalPayment === 'Paid' ? 'Completed' : i % 2 === 0 ? 'Pending' : 'Partial Paid';
       const refNum = isInsurancePayer ? `EFT-835-${String(700000 + i * 111)}` : `CC-AUTH-${String(300000 + i * 222)}`;
 
       await client.query(
@@ -854,7 +1033,10 @@ export async function runSeed(): Promise<SeedSummary[]> {
           amount, payment_date, status, reference_number, notes
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
-        )`,
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          amount = EXCLUDED.amount,
+          status = EXCLUDED.status`,
         [
           payId,
           cl.encounterId,
@@ -864,19 +1046,20 @@ export async function runSeed(): Promise<SeedSummary[]> {
           payType,
           payer,
           payAmt,
-          '2026-03-02',
+          formatLocalDate(new Date(Date.now() - (i % 15) * 86400000)),
           status,
           refNum,
-          `Remittance posted against claim ${cl.claimId}. Reconciled with bank deposit.`
+          `Remittance posted against claim ${cl.claimId}. Reconciled with bank deposit.`,
         ]
       );
     }
-    summary.push({ table: 'payments', count: claims.length });
+    const payTot = await client.query('SELECT COUNT(*)::int AS cnt FROM payments');
+    summary.push({ table: 'payments', insertedOrUpdated: claims.length, totalInDb: payTot.rows[0].cnt });
 
     // =========================================================================
-    // 12. DENIALS (20 Denials for Denied or High/Medium Risk Claims)
+    // 12. DENIALS (25 Claim Denial & Appeal Records)
     // =========================================================================
-    console.log('🚫 Seeding 20 Claim Denial & Appeal Records...');
+    console.log('🚫 Upserting 25 Claim Denial & Appeal Records...');
     const denialReasons = [
       { code: 'CO-16', reason: 'Claim lacks information or has non-covered procedure billing item', amtMult: 1.0 },
       { code: 'CO-18', reason: 'Exact duplicate claim/service previously submitted', amtMult: 0.8 },
@@ -886,10 +1069,13 @@ export async function runSeed(): Promise<SeedSummary[]> {
       { code: 'CO-97', reason: 'Benefit included in payment/allowance for primary service', amtMult: 0.5 },
     ];
 
-    const deniedClaims = claims.filter(c => c.claimStatus === 'Denied' || c.riskLevel === 'High Risk').slice(0, 20);
-    // If not enough, fill with claims from the end
-    while (deniedClaims.length < 20) {
-      deniedClaims.push(claims[100 - deniedClaims.length - 1]);
+    const deniedClaims = claims.filter((c) => c.claimStatus === 'Denied' || c.riskLevel === 'High Risk').slice(0, 25);
+    let fillIdx = 99;
+    while (deniedClaims.length < 25 && fillIdx >= 0) {
+      if (!deniedClaims.some((d) => d.claimId === claims[fillIdx].claimId)) {
+        deniedClaims.push(claims[fillIdx]);
+      }
+      fillIdx--;
     }
 
     for (let i = 0; i < deniedClaims.length; i++) {
@@ -897,9 +1083,9 @@ export async function runSeed(): Promise<SeedSummary[]> {
       const denId = `den-${String(i + 1).padStart(3, '0')}`;
       const reasonObj = denialReasons[i % denialReasons.length];
       const denAmt = Math.round(dc.totalCharge * reasonObj.amtMult * 100) / 100;
-      
-      const denStatus = i < 12 ? 'Active' : i < 17 ? 'Resolved' : 'Closed';
-      const appealStatus = i < 8 ? 'Under Review' : i < 14 ? 'Appeal Submitted' : i < 18 ? 'Overturned' : 'Upheld';
+
+      const denStatus = i < 14 ? 'Active' : i < 20 ? 'Resolved' : 'Closed';
+      const appealStatus = i < 10 ? 'Under Review' : i < 17 ? 'Appeal Submitted' : i < 22 ? 'Overturned' : 'Upheld';
 
       await client.query(
         `INSERT INTO denials (
@@ -907,7 +1093,11 @@ export async function runSeed(): Promise<SeedSummary[]> {
           denial_status, appeal_status, notes
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9
-        )`,
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          denial_status = EXCLUDED.denial_status,
+          appeal_status = EXCLUDED.appeal_status,
+          updated_at = NOW()`,
         [
           denId,
           dc.claimId,
@@ -917,16 +1107,17 @@ export async function runSeed(): Promise<SeedSummary[]> {
           denAmt,
           denStatus,
           appealStatus,
-          `Payer CARC reason: ${reasonObj.code}. Clinical appeal letter and supporting chart notes generated by RCM team.`
+          `Payer CARC reason: ${reasonObj.code}. Clinical appeal letter and supporting chart notes generated by RCM team.`,
         ]
       );
     }
-    summary.push({ table: 'denials', count: deniedClaims.length });
+    const denTot = await client.query('SELECT COUNT(*)::int AS cnt FROM denials');
+    summary.push({ table: 'denials', insertedOrUpdated: deniedClaims.length, totalInDb: denTot.rows[0].cnt });
 
     // =========================================================================
     // 13. PAYMENT PREDICTIONS (100 Records - 1:1 with Claims)
     // =========================================================================
-    console.log('🤖 Seeding 100 Machine Learning Payment Prediction Records...');
+    console.log('🤖 Upserting 100 Machine Learning Payment Prediction Records...');
     for (let i = 0; i < claims.length; i++) {
       const cl = claims[i];
       const predId = `pred-${String(i + 1).padStart(3, '0')}`;
@@ -940,26 +1131,26 @@ export async function runSeed(): Promise<SeedSummary[]> {
           factor: 'Prior Payer Approval Ratio',
           impact: cl.prob >= 0.7 ? 'positive' : 'negative',
           weight: 0.35,
-          description: `${cl.insPayer} historical clean claim clearance rate is ${Math.round(cl.prob * 100)}%`
+          description: `${cl.insPayer} historical clean claim clearance rate is ${Math.round(cl.prob * 100)}%`,
         },
         {
           factor: 'Patient Eligibility Status',
           impact: 'positive',
           weight: 0.25,
-          description: 'Commercial policy in-network verification confirmed active'
+          description: 'Commercial policy in-network verification confirmed active',
         },
         {
           factor: 'Clinical Coding Complexity',
           impact: cl.riskLevel === 'High Risk' ? 'negative' : 'positive',
-          weight: 0.20,
-          description: `Medical code validation verified with ${cl.riskLevel.toLowerCase()} audit profile`
+          weight: 0.2,
+          description: `Medical code validation verified with ${cl.riskLevel.toLowerCase()} audit profile`,
         },
         {
           factor: 'Prior Authorization Check',
           impact: cl.riskLevel === 'High Risk' ? 'negative' : 'neutral',
-          weight: 0.20,
-          description: 'Authorization guidelines cross-referenced against payer rules'
-        }
+          weight: 0.2,
+          description: 'Authorization guidelines cross-referenced against payer rules',
+        },
       ];
 
       const inputFeatures = {
@@ -967,7 +1158,7 @@ export async function runSeed(): Promise<SeedSummary[]> {
         payer: cl.insPayer,
         riskLevel: cl.riskLevel,
         probability: cl.prob,
-        predictedStatus: cl.predictedStatus
+        predictedStatus: cl.predictedStatus,
       };
 
       await client.query(
@@ -976,7 +1167,11 @@ export async function runSeed(): Promise<SeedSummary[]> {
           votes_total, top_factors, input_features
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
-        )`,
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          prediction = EXCLUDED.prediction,
+          probability = EXCLUDED.probability,
+          risk_level = EXCLUDED.risk_level`,
         [
           predId,
           cl.claimId,
@@ -987,16 +1182,17 @@ export async function runSeed(): Promise<SeedSummary[]> {
           votesUnpaid,
           totalVotes,
           JSON.stringify(topFactors),
-          JSON.stringify(inputFeatures)
+          JSON.stringify(inputFeatures),
         ]
       );
     }
-    summary.push({ table: 'payment_predictions', count: claims.length });
+    const predTot = await client.query('SELECT COUNT(*)::int AS cnt FROM payment_predictions');
+    summary.push({ table: 'payment_predictions', insertedOrUpdated: claims.length, totalInDb: predTot.rows[0].cnt });
 
     // =========================================================================
     // 14. USERS (System Staff Accounts)
     // =========================================================================
-    console.log('👤 Seeding System Users & Roles...');
+    console.log('👤 Upserting System Users & Roles...');
     const users = [
       { id: 'usr-admin-1', name: 'System Administrator', email: 'admin@medicare.com', role: 'Admin' },
       { id: 'usr-biller-1', name: 'Rahul Biller', email: 'billing@medicare.com', role: 'User' },
@@ -1012,15 +1208,16 @@ export async function runSeed(): Promise<SeedSummary[]> {
         [u.id, u.name, u.email, passwordHash, u.role]
       );
     }
-    summary.push({ table: 'users', count: users.length });
+    const usrTot = await client.query('SELECT COUNT(*)::int AS cnt FROM users');
+    summary.push({ table: 'users', insertedOrUpdated: users.length, totalInDb: usrTot.rows[0].cnt });
 
     await client.query('COMMIT;');
 
     console.log('===============================================================');
-    console.log('🎉 [Success] Database Seeding Completed Successfully!');
+    console.log('🎉 [Success] Neon PostgreSQL Database Seeding Completed!');
     console.log('===============================================================');
     for (const s of summary) {
-      console.log(`  ✓ Table '${s.table}': ${s.count} records inserted`);
+      console.log(`  ✓ Table '${s.table}': ${s.insertedOrUpdated} seeded | ${s.totalInDb} total rows in Neon DB`);
     }
     return summary;
   } catch (err) {

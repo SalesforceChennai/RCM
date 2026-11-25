@@ -28,21 +28,22 @@ const database = process.env.PGDATABASE || 'rcm_database';
 export const pool = new Pool(
   connectionString
     ? {
-        connectionString,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-      }
+      connectionString,
+      ssl: { rejectUnauthorized: false },
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    }
     : {
-        host,
-        port,
-        user,
-        password,
-        database,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-      }
+      host,
+      port,
+      user,
+      password,
+      database,
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 5000,
+    }
 );
 
 pool.on('error', (err) => {

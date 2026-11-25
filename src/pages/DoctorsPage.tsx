@@ -390,8 +390,8 @@ export const DoctorsPage: React.FC<DoctorsPageProps> = ({
           </div>
           <div className="docs-stat-info">
             <span className="docs-stat-label">Clinical Coverage</span>
-            <span className="docs-stat-value">100%</span>
-            <span className="docs-stat-sub">All suites active</span>
+            <span className="docs-stat-value">{totalDoctorsCount > 0 ? '100%' : '0%'}</span>
+            <span className="docs-stat-sub">{totalDoctorsCount > 0 ? 'All suites active' : 'No active suites'}</span>
           </div>
         </div>
       </div>

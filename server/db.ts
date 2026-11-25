@@ -11,40 +11,40 @@ const serverEnvPath = path.resolve(process.cwd(), 'server', '.env');
 const rootEnvPath = path.resolve(process.cwd(), '.env');
 
 if (fs.existsSync(serverEnvPath)) {
-  dotenv.config({ path: serverEnvPath });
+  dotenv.config({ path: serverEnvPath, override: true });
 } else if (fs.existsSync(rootEnvPath)) {
-  dotenv.config({ path: rootEnvPath });
+  dotenv.config({ path: rootEnvPath, override: true });
 } else {
   dotenv.config();
 }
 
-const connectionString = process.env.DATABASE_URL;
-const host = process.env.PGHOST || 'localhost';
-const port = parseInt(process.env.PGPORT || '5432', 10);
-const user = process.env.PGUSER || 'postgres';
-const password = process.env.PGPASSWORD || '';
-const database = process.env.PGDATABASE || 'rcm_database';
+const connectionString = process.env.DATABASE_URL?.trim();
+if (!connectionString) {
+  throw new Error('DATABASE_URL environment variable is required to connect to Neon cloud PostgreSQL.');
+}
 
-export const pool = new Pool(
-  connectionString
-    ? {
-      connectionString,
-      ssl: { rejectUnauthorized: false },
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    }
-    : {
-      host,
-      port,
-      user,
-      password,
-      database,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    }
-);
+function parseConnectionMetadata(connStr: string): { database: string; host: string; port: number } {
+  try {
+    const parsed = new URL(connStr);
+    return {
+      database: parsed.pathname.replace(/^\//, '') || 'neondb',
+      host: parsed.hostname || 'neon.tech',
+      port: parsed.port ? parseInt(parsed.port, 10) : 5432,
+    };
+  } catch {
+    return { database: 'neondb', host: 'neon.tech', port: 5432 };
+  }
+}
+
+const dbMeta = parseConnectionMetadata(connectionString);
+
+export const pool = new Pool({
+  connectionString,
+  ssl: { rejectUnauthorized: false },
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
 
 pool.on('error', (err) => {
   console.error('Unexpected error on idle PostgreSQL client:', err);
@@ -65,15 +65,15 @@ export async function checkConnection(): Promise<{ connected: boolean; database:
     const client = await pool.connect();
     try {
       await client.query('SELECT 1;');
-      return { connected: true, database };
+      return { connected: true, database: dbMeta.database };
     } finally {
       client.release();
     }
   } catch (err: any) {
     return {
       connected: false,
-      database,
-      error: err?.message || 'Failed to connect to PostgreSQL',
+      database: dbMeta.database,
+      error: err?.message || 'Failed to connect to Neon PostgreSQL',
     };
   }
 }
@@ -469,7 +469,7 @@ export async function initDatabase(): Promise<boolean> {
     }
 
     await client.query('COMMIT;');
-    console.log('✅ [PostgreSQL] Initialized schema and all 14 tables in rcm_database');
+    console.log(`✅ [PostgreSQL] Initialized schema and all 14 tables in '${dbMeta.database}' (${dbMeta.host})`);
     return true;
   } catch (err) {
     await client.query('ROLLBACK;');
@@ -496,9 +496,10 @@ export const db = {
   getStatus() {
     return {
       connected: true,
-      database: process.env.PGDATABASE || 'rcm_database',
-      host: process.env.PGHOST || 'localhost',
-      port: parseInt(process.env.PGPORT || '5432', 10),
+      database: dbMeta.database,
+      host: dbMeta.host,
+      port: dbMeta.port,
+      ssl: true,
     };
   },
   async getUserByEmail(email: string): Promise<UserRecord | null> {

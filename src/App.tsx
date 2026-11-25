@@ -36,7 +36,6 @@ import { appointmentService } from './services/appointmentService';
 import { doctorService } from './services/doctorService';
 import { departmentService } from './services/departmentService';
 import { statsService, getTodayDateStr } from './services/statsService';
-import { storageService } from './services/storageService';
 import { patientService } from './services/patientService';
 
 const DEFAULT_USER: AuthUser = {
@@ -85,9 +84,7 @@ export const App: React.FC = () => {
   const [selectedDoctor, setSelectedDoctor] = useState<string>('all');
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<AppointmentStatus | 'All'>('All');
-  const [selectedDate, setSelectedDate] = useState<string>(() => {
-    return storageService.getCurrentDate() || getTodayDateStr();
-  });
+  const [selectedDate, setSelectedDate] = useState<string>(() => getTodayDateStr());
 
   // Modals & Feedback
   const [viewingAppointment, setViewingAppointment] = useState<Appointment | null>(null);
@@ -238,9 +235,6 @@ export const App: React.FC = () => {
     setNewlyCreatedPatient(patient);
     setPreselectedPatientForNewApt(patient);
     setPatientsRefreshKey((prev) => prev + 1);
-    // Sync cache with PostgreSQL data
-    const currentPatients = storageService.getPatients();
-    storageService.setPatients([patient, ...currentPatients.filter((p) => p.id !== patient.id)]);
     try {
       await patientService.getAll();
     } catch {}
@@ -250,7 +244,6 @@ export const App: React.FC = () => {
   const handleAppointmentCreated = async (appointment: any) => {
     if (appointment?.appointmentDate) {
       setSelectedDate(appointment.appointmentDate);
-      storageService.setCurrentDate(appointment.appointmentDate);
     }
     setSearchQuery('');
     setSelectedDoctor('all');
@@ -502,7 +495,6 @@ export const App: React.FC = () => {
             onNewAppointmentClick={(selectedDate) => {
               if (selectedDate) {
                 setSelectedDate(selectedDate);
-                storageService.setCurrentDate(selectedDate);
               }
               setPreselectedPatientForNewApt(null);
               setCurrentView('new-appointment');

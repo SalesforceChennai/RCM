@@ -1,10 +1,14 @@
 import type {
+  Patient,
+  Doctor,
+  Department,
   Appointment,
   PatientRegistration,
   InsuranceInfo,
+  ChargeCaptureEncounter,
   Gender
 } from '../types';
-import { storageService } from './storageService';
+import { getTodayDateStr } from './statsService';
 
 export interface AggregatedPatient {
   id: string;
@@ -80,15 +84,15 @@ export interface FinancialSummaryTotals {
 
 export interface PatientFilterParams {
   searchQuery?: string;
-  doctorId?: string; // 'all' or doctorId/name
-  departmentId?: string; // 'all' or deptId/name
-  gender?: string; // 'all' | 'Male' | 'Female' | 'Other'
-  ageGroup?: string; // 'all' | '0-18' | '19-35' | '36-50' | '51-65' | '65+'
-  appointmentStatus?: string; // 'all' | 'Upcoming' | 'Confirmed' | 'Completed' | 'Cancelled' | 'No-show'
-  insuranceStatus?: string; // 'all' | 'Active' | 'Pending' | 'Expired' | 'Declined'
+  doctorId?: string;
+  departmentId?: string;
+  gender?: string;
+  ageGroup?: string;
+  appointmentStatus?: string;
+  insuranceStatus?: string;
   dateFilterType?: 'registration' | 'lastAppointment' | 'nextAppointment';
-  dateFrom?: string; // YYYY-MM-DD
-  dateTo?: string; // YYYY-MM-DD
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export interface PatientsSummaryStats {
@@ -112,107 +116,30 @@ export function calculateAge(dobString: string, refDateString?: string): number 
   return Math.max(0, age);
 }
 
-const MOCK_PATIENT_FINANCIALS: Record<string, {
-  totalCharges: number;
-  insurancePaid: number;
-  patientPaid: number;
-  adjustments: number;
-  outstanding: number;
-  aging: {
-    current: number;
-    days31_60: number;
-    days61_90: number;
-    days91_120: number;
-    over120: number;
-  };
-}> = {
-  'pat-1': {
-    totalCharges: 182450.00,
-    insurancePaid: 118930.20,
-    patientPaid: 13830.00,
-    adjustments: 28620.00,
-    outstanding: 48670.40,
-    aging: { current: 28400.00, days31_60: 12200.00, days61_90: 5800.40, days91_120: 2270.00, over120: 0.00 }
-  },
-  'pat-2': {
-    totalCharges: 164200.00,
-    insurancePaid: 107050.40,
-    patientPaid: 12450.00,
-    adjustments: 25750.00,
-    outstanding: 43800.20,
-    aging: { current: 24500.00, days31_60: 10800.00, days61_90: 5500.20, days91_120: 3000.00, over120: 0.00 }
-  },
-  'pat-3': {
-    totalCharges: 146800.00,
-    insurancePaid: 95720.00,
-    patientPaid: 11130.00,
-    adjustments: 23020.00,
-    outstanding: 39150.00,
-    aging: { current: 22100.00, days31_60: 9400.00, days61_90: 4850.00, days91_120: 2800.00, over120: 0.00 }
-  },
-  'pat-4': {
-    totalCharges: 139500.00,
-    insurancePaid: 90950.00,
-    patientPaid: 10580.00,
-    adjustments: 21870.00,
-    outstanding: 37200.00,
-    aging: { current: 20800.00, days31_60: 8900.00, days61_90: 4500.00, days91_120: 3000.00, over120: 0.00 }
-  },
-  'pat-5': {
-    totalCharges: 153200.00,
-    insurancePaid: 99890.00,
-    patientPaid: 11620.00,
-    adjustments: 24020.00,
-    outstanding: 40870.00,
-    aging: { current: 23200.00, days31_60: 9800.00, days61_90: 4970.00, days91_120: 2900.00, over120: 0.00 }
-  },
-  'pat-6': {
-    totalCharges: 128400.00,
-    insurancePaid: 83710.00,
-    patientPaid: 9740.00,
-    adjustments: 20130.00,
-    outstanding: 34260.00,
-    aging: { current: 19400.00, days31_60: 8200.00, days61_90: 4160.00, days91_120: 2500.00, over120: 0.00 }
-  },
-  'pat-7': {
-    totalCharges: 117600.00,
-    insurancePaid: 76680.00,
-    patientPaid: 8920.00,
-    adjustments: 18440.00,
-    outstanding: 31390.00,
-    aging: { current: 17800.00, days31_60: 7500.00, days61_90: 3890.00, days91_120: 2200.00, over120: 0.00 }
-  },
-  'pat-8': {
-    totalCharges: 114100.00,
-    insurancePaid: 74400.00,
-    patientPaid: 8650.00,
-    adjustments: 17890.00,
-    outstanding: 30450.00,
-    aging: { current: 17200.00, days31_60: 7300.00, days61_90: 3750.00, days91_120: 2200.00, over120: 0.00 }
-  },
-  'pat-9': {
-    totalCharges: 112200.00,
-    insurancePaid: 72900.00,
-    patientPaid: 8510.20,
-    adjustments: 17516.30,
-    outstanding: 29742.30,
-    aging: { current: 12020.00, days31_60: 5110.50, days61_90: 5229.40, days91_120: 2282.40, over120: 5100.00 }
-  }
-};
-
 export const patientAggregatorService = {
   /**
-   * Retrieves and merges all patient information with their appointments,
-   * registrations, doctors, insurance, and charge capture data.
+   * Fetches and merges all patient information exclusively from Neon PostgreSQL /api/* endpoints.
    */
-  getAggregatedPatients(): AggregatedPatient[] {
-    const patients = storageService.getPatients();
-    const appointments = storageService.getAppointments();
-    const doctors = storageService.getDoctors();
-    const departments = storageService.getDepartments();
-    const registrations = storageService.getRegistrations();
-    const insurances = storageService.getInsuranceList();
-    const currentDate = storageService.getCurrentDate() || '2024-05-31';
+  async getAggregatedPatients(): Promise<AggregatedPatient[]> {
+    const [patRes, aptRes, docRes, deptRes, regRes, insRes, chgRes] = await Promise.all([
+      fetch('/api/patients').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/appointments').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/doctors').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/departments').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/registrations').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/insurance').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/charges').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+    ]);
+
+    const patients: Patient[] = Array.isArray(patRes?.data) ? patRes.data : [];
+    const appointments: Appointment[] = Array.isArray(aptRes?.data) ? aptRes.data : [];
+    const doctors: Doctor[] = Array.isArray(docRes?.data) ? docRes.data : [];
+    const departments: Department[] = Array.isArray(deptRes?.data) ? deptRes.data : [];
+    const registrations: PatientRegistration[] = Array.isArray(regRes?.data) ? regRes.data : [];
+    const insurances: InsuranceInfo[] = Array.isArray(insRes?.data) ? insRes.data : [];
+    const charges: ChargeCaptureEncounter[] = Array.isArray(chgRes?.data) ? chgRes.data : [];
+
+    const currentDate = getTodayDateStr();
 
     return patients.map((patient) => {
       const patientIdClean = patient.id.toLowerCase();
@@ -220,7 +147,6 @@ export const patientAggregatorService = {
       const fullName = `${patient.firstName} ${patient.lastName}`.trim();
       const fullNameClean = fullName.toLowerCase();
 
-      // Find all appointments for this patient
       const patientAppointments = appointments.filter((a) => {
         if (a.patientId && a.patientId.toLowerCase() === patientIdClean) return true;
         if (a.patient?.id && a.patient.id.toLowerCase() === patientIdClean) return true;
@@ -229,14 +155,12 @@ export const patientAggregatorService = {
         return false;
       });
 
-      // Sort appointments chronologically
       const sortedAppointments = [...patientAppointments].sort((a, b) => {
         const cmp = a.appointmentDate.localeCompare(b.appointmentDate);
         if (cmp !== 0) return cmp;
         return a.appointmentTime.localeCompare(b.appointmentTime);
       });
 
-      // Split into past and upcoming relative to current system date
       const pastAppointments = sortedAppointments.filter(
         (a) => a.appointmentDate < currentDate || (a.appointmentDate === currentDate && a.status === 'Completed')
       );
@@ -244,15 +168,12 @@ export const patientAggregatorService = {
         (a) => a.appointmentDate > currentDate || (a.appointmentDate === currentDate && a.status !== 'Completed')
       );
 
-      // Last appointment is the latest among past, or the latest overall if no past
       const lastApt = pastAppointments.length > 0
         ? pastAppointments[pastAppointments.length - 1]
         : (sortedAppointments.length > 0 ? sortedAppointments[0] : null);
 
-      // Next appointment is the nearest upcoming
       const nextApt = upcomingAppointments.length > 0 ? upcomingAppointments[0] : null;
 
-      // Determine assigned or consulting doctor
       let assignedDoc: AggregatedPatient['assignedDoctor'] = null;
       let assignedDept: AggregatedPatient['department'] = null;
 
@@ -266,92 +187,77 @@ export const patientAggregatorService = {
           department: activeAppointment.departmentName,
         };
 
-        const matchingDoc = doctors.find((d) => d.id === activeAppointment.doctorId || d.name.toLowerCase() === activeAppointment.doctor.name.toLowerCase());
+        const matchingDoc = doctors.find(
+          (d) => d.id === activeAppointment.doctorId || d.name.toLowerCase() === activeAppointment.doctor.name.toLowerCase()
+        );
         if (matchingDoc) {
           assignedDoc.specialization = matchingDoc.specialization;
         }
 
+        const matchingDept = departments.find(
+          (dept) => dept.id === activeAppointment.departmentId || dept.name === activeAppointment.departmentName
+        );
         assignedDept = {
-          id: activeAppointment.departmentId || 'dept-gen',
-          name: activeAppointment.departmentName || 'General Medicine',
+          id: activeAppointment.departmentId || matchingDept?.id || '',
+          name: activeAppointment.departmentName || matchingDept?.name || '',
         };
-      } else {
-        // Fallback: assign to a default doctor based on patient code
-        const hash = patient.patientId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        const fallbackDoc = doctors[hash % doctors.length] || doctors[0];
-        if (fallbackDoc) {
-          assignedDoc = {
-            id: fallbackDoc.id,
-            name: fallbackDoc.name,
-            avatar: fallbackDoc.avatar,
-            specialization: fallbackDoc.specialization,
-            department: fallbackDoc.departmentName,
-          };
-          const matchingDept = departments.find((d) => d.id === fallbackDoc.departmentId);
-          assignedDept = {
-            id: fallbackDoc.departmentId,
-            name: matchingDept ? matchingDept.name : fallbackDoc.departmentName,
-          };
-        }
       }
 
-      // Registration data
       const registration = registrations.find(
         (r) => r.patientId.toLowerCase() === patientIdClean || r.patientId.toLowerCase() === patientCodeClean
       ) || null;
 
-      const registrationDate = registration?.registrationDate || '2024-05-31';
+      const registrationDate = registration?.registrationDate || '';
 
-      // Insurance data
       const insurance = insurances.find(
         (i) => i.patientId.toLowerCase() === patientIdClean || i.patientId.toLowerCase() === patientCodeClean
       ) || null;
 
       let insuranceStatus: AggregatedPatient['insuranceStatus'] = 'Uninsured';
       if (insurance) {
-        if (insurance.insuranceStatus === 'Active') insuranceStatus = 'Active';
+        if (insurance.providerStatus === 'Declined') insuranceStatus = 'Declined';
+        else if (insurance.insuranceStatus === 'Active') insuranceStatus = 'Active';
         else if (insurance.insuranceStatus === 'Pending Verification') insuranceStatus = 'Pending';
         else if (insurance.insuranceStatus === 'Expired') insuranceStatus = 'Expired';
-        else if (insurance.providerStatus === 'Declined') insuranceStatus = 'Declined';
-        else insuranceStatus = 'Active';
+        else insuranceStatus = 'Pending';
       }
 
-      // Charge Capture & Financials
-      const mockFin = MOCK_PATIENT_FINANCIALS[patient.id];
+      // Compute real financials exclusively from Neon PostgreSQL charges table
+      const patientCharges = charges.filter(
+        (c) => c.patientId.toLowerCase() === patientIdClean || c.patientId.toLowerCase() === patientCodeClean
+      );
+
       let totalCharges = 0;
       let insurancePaid = 0;
       let patientPaid = 0;
-      let adjustments = 0;
       let pendingBalance = 0;
-      let aging = { current: 0, days31_60: 0, days61_90: 0, days91_120: 0, over120: 0, total: 0 };
+      const aging = { current: 0, days31_60: 0, days61_90: 0, days91_120: 0, over120: 0, total: 0 };
 
-      if (mockFin) {
-        totalCharges = mockFin.totalCharges;
-        insurancePaid = mockFin.insurancePaid;
-        patientPaid = mockFin.patientPaid;
-        adjustments = mockFin.adjustments;
-        pendingBalance = mockFin.outstanding;
-        aging = {
-          ...mockFin.aging,
-          total: mockFin.outstanding,
-        };
-      } else {
-        totalCharges = 1250.00;
-        insurancePaid = 800.00;
-        patientPaid = 150.00;
-        adjustments = 100.00;
-        pendingBalance = 200.00;
-        aging = { current: 200.00, days31_60: 0, days61_90: 0, days91_120: 0, over120: 0, total: 200.00 };
+      for (const chg of patientCharges) {
+        totalCharges += Number(chg.totalCharges || 0);
+        insurancePaid += Number(chg.insuranceReceived || 0);
+        patientPaid += Number(chg.patientPaid || 0);
+        const outstanding = Number(chg.totalOutstandingAR || 0);
+        pendingBalance += outstanding;
+
+        if (outstanding > 0 && chg.encounterDate) {
+          const diffMs = new Date(currentDate).getTime() - new Date(chg.encounterDate).getTime();
+          const diffDays = Math.max(0, Math.floor(diffMs / 86400000));
+          if (diffDays <= 30) aging.current += outstanding;
+          else if (diffDays <= 60) aging.days31_60 += outstanding;
+          else if (diffDays <= 90) aging.days61_90 += outstanding;
+          else if (diffDays <= 120) aging.days91_120 += outstanding;
+          else aging.over120 += outstanding;
+        }
       }
+      aging.total = pendingBalance;
+      const adjustments = Math.max(0, totalCharges - insurancePaid - patientPaid - pendingBalance);
 
-      // Appointment Status
-      let appointmentStatus = 'No-show';
+      let appointmentStatus = 'None';
       if (nextApt) {
         appointmentStatus = nextApt.status === 'Confirmed' ? 'Confirmed' : 'Upcoming';
       } else if (lastApt) {
         appointmentStatus = lastApt.status;
-      } else {
-        appointmentStatus = 'Confirmed';
       }
 
       const age = calculateAge(patient.dob, currentDate);
@@ -369,7 +275,7 @@ export const patientAggregatorService = {
         email: patient.email,
         address: patient.address,
         avatar: patient.avatar,
-        bloodGroup: patient.bloodGroup || 'O+',
+        bloodGroup: patient.bloodGroup || '',
         emergencyContact: registration?.emergencyContactName
           ? `${registration.emergencyContactName} (${registration.emergencyContactRelationship} - ${registration.emergencyContactPhone})`
           : patient.emergencyContact || 'Not recorded',
@@ -384,10 +290,10 @@ export const patientAggregatorService = {
         appointmentStatus,
         allAppointments: sortedAppointments,
         insurance,
-        insuranceProvider: insurance?.insuranceProvider || (patientIdClean.includes('pat-1') ? 'Blue Cross Blue Shield' : 'UnitedHealthcare'),
+        insuranceProvider: insurance?.insuranceProvider || 'Uninsured',
         insuranceStatus,
-        memberId: insurance?.memberId || `MBR-${patient.patientId}`,
-        policyNumber: insurance?.policyNumber || `POL-88421-${patient.patientId}`,
+        memberId: insurance?.memberId || '—',
+        policyNumber: insurance?.policyNumber || '—',
         financials: {
           totalCharges: Math.max(0, totalCharges),
           insurancePaid: Math.max(0, insurancePaid),
@@ -400,12 +306,8 @@ export const patientAggregatorService = {
     });
   },
 
-  /**
-   * Filters a list of aggregated patients using the provided parameters.
-   */
   filterPatients(patients: AggregatedPatient[], params: PatientFilterParams): AggregatedPatient[] {
     return patients.filter((patient) => {
-      // 1. Text Search: Patient Name, Patient ID, Phone, Email
       if (params.searchQuery && params.searchQuery.trim()) {
         const q = params.searchQuery.trim().toLowerCase();
         const matchesName = patient.fullName.toLowerCase().includes(q);
@@ -418,7 +320,6 @@ export const patientAggregatorService = {
         }
       }
 
-      // 2. Doctor Filter: matches assigned doctor or any appointment doctor
       if (params.doctorId && params.doctorId !== 'all') {
         const targetDoctor = params.doctorId.toLowerCase();
         const hasMatchingAssigned = patient.assignedDoctor && (
@@ -436,7 +337,6 @@ export const patientAggregatorService = {
         }
       }
 
-      // 3. Department Filter
       if (params.departmentId && params.departmentId !== 'all') {
         const targetDept = params.departmentId.toLowerCase();
         const hasMatchingAssigned = patient.department && (
@@ -454,14 +354,12 @@ export const patientAggregatorService = {
         }
       }
 
-      // 4. Gender Filter
       if (params.gender && params.gender !== 'all') {
         if (patient.gender.toLowerCase() !== params.gender.toLowerCase()) {
           return false;
         }
       }
 
-      // 5. Age Group Filter: '0-18', '19-35', '36-50', '51-65', '65+'
       if (params.ageGroup && params.ageGroup !== 'all') {
         const age = patient.age;
         if (params.ageGroup === '0-18' && (age < 0 || age > 18)) return false;
@@ -471,7 +369,6 @@ export const patientAggregatorService = {
         if (params.ageGroup === '65+' && age < 65) return false;
       }
 
-      // 6. Appointment Status Filter: 'Upcoming', 'Confirmed', 'Completed', 'Cancelled', 'No-show'
       if (params.appointmentStatus && params.appointmentStatus !== 'all') {
         const targetStatus = params.appointmentStatus.toLowerCase();
         const currentAptStatus = patient.appointmentStatus.toLowerCase();
@@ -492,14 +389,12 @@ export const patientAggregatorService = {
         }
       }
 
-      // 7. Insurance Status Filter: 'Active', 'Pending', 'Expired', 'Declined'
       if (params.insuranceStatus && params.insuranceStatus !== 'all') {
         if (patient.insuranceStatus.toLowerCase() !== params.insuranceStatus.toLowerCase()) {
           return false;
         }
       }
 
-      // 8. Date Filter: 'registration', 'lastAppointment', 'nextAppointment'
       if (params.dateFilterType && (params.dateFrom || params.dateTo)) {
         let dateToCheck = '';
         if (params.dateFilterType === 'registration') {
@@ -524,13 +419,9 @@ export const patientAggregatorService = {
     });
   },
 
-  /**
-   * Computes the 5 summary KPIs for the Patients page.
-   */
   calculateSummaryStats(patients: AggregatedPatient[]): PatientsSummaryStats {
     const totalPatients = patients.length;
 
-    // Active: has active insurance or confirmed/upcoming/completed visit
     const activePatients = patients.filter((p) => {
       return (
         p.insuranceStatus === 'Active' ||
@@ -540,15 +431,12 @@ export const patientAggregatorService = {
       );
     }).length;
 
-    // Upcoming Appointments: patients with a next appointment or upcoming status
     const patientsWithUpcomingAppointments = patients.filter(
       (p) => Boolean(p.nextAppointmentDate) || p.appointmentStatus === 'Upcoming' || p.appointmentStatus === 'Confirmed'
     ).length;
 
-    // Pending Insurance: patients with insurance status 'Pending'
     const pendingInsurance = patients.filter((p) => p.insuranceStatus === 'Pending').length;
 
-    // Outstanding Balance: pending balance > 0
     const patientsWithOutstandingBalance = patients.filter(
       (p) => p.financials.pendingBalance > 0
     ).length;
@@ -562,9 +450,6 @@ export const patientAggregatorService = {
     };
   },
 
-  /**
-   * Computes the financial summary and aging totals for a list of patients.
-   */
   calculateFinancialTotals(patients: AggregatedPatient[]): FinancialSummaryTotals {
     return patients.reduce(
       (acc, p) => {

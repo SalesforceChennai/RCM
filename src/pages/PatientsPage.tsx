@@ -29,7 +29,6 @@ import {
 } from '../services/patientAggregatorService';
 import { doctorService } from '../services/doctorService';
 import { departmentService } from '../services/departmentService';
-import { patientService } from '../services/patientService';
 
 interface PatientsPageProps {
   onSelectPatient: (patientId: string) => void;
@@ -80,15 +79,15 @@ export const PatientsPage: React.FC<PatientsPageProps> = ({
   const [showFiltersPanel, setShowFiltersPanel] = useState<boolean>(true);
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
 
-  // Load initial reference data & patients from PostgreSQL
+  // Load initial reference data & patients from Neon PostgreSQL
   const loadData = async () => {
     setLoading(true);
     try {
-      await patientService.getAll();
-      const patients = patientAggregatorService.getAggregatedPatients();
+      const patients = await patientAggregatorService.getAggregatedPatients();
       setAllPatients(patients);
     } catch (err) {
       console.error('Error loading patients:', err);
+      setAllPatients([]);
     } finally {
       setLoading(false);
     }

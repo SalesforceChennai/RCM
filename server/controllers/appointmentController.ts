@@ -53,7 +53,7 @@ const APPOINTMENT_BASE_SELECT = `
 
 export async function getAllAppointments(req: Request, res: Response): Promise<void> {
   try {
-    const { searchQuery, doctorId, departmentId, status, date, startDate, endDate, month, cardFilter, referenceDate } = req.query;
+    const { searchQuery, patientId, doctorId, departmentId, status, date, startDate, endDate, month, cardFilter, referenceDate } = req.query;
 
     let conditions: string[] = [];
     let params: any[] = [];
@@ -97,6 +97,12 @@ export async function getAllAppointments(req: Request, res: Response): Promise<v
         LOWER(d.name) LIKE $${idx}
       )`);
       params.push(`%${searchQuery.trim().toLowerCase()}%`);
+      idx++;
+    }
+
+    if (patientId && typeof patientId === 'string' && patientId.trim()) {
+      conditions.push(`(a.patient_id = $${idx} OR LOWER(p.patient_id) = LOWER($${idx}))`);
+      params.push(patientId.trim());
       idx++;
     }
 

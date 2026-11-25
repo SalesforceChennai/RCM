@@ -1,5 +1,4 @@
 import type { Patient, PatientRegistration, RegistrationStatus, Appointment } from '../types';
-import { storageService } from './storageService';
 
 export interface RegistrationSearchResult {
   patient: Patient;
@@ -8,50 +7,54 @@ export interface RegistrationSearchResult {
 }
 
 export const registrationService = {
+  async getAllRegistrations(): Promise<PatientRegistration[]> {
+    try {
+      const res = await fetch('/api/registrations');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          return json.data;
+        }
+      }
+    } catch (err) {
+      console.error('[registrationService] Failed to fetch registrations:', err);
+    }
+    return [];
+  },
+
   async getRegistration(patientId: string): Promise<PatientRegistration | null> {
     try {
       const res = await fetch(`/api/registrations/${encodeURIComponent(patientId)}`);
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.data) {
-          storageService.saveRegistration(json.data);
           return json.data;
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[registrationService] Failed to fetch registration:', err);
     }
-    return storageService.getRegistrationByPatientId(patientId);
+    return null;
   },
 
   async saveRegistration(data: Omit<PatientRegistration, 'id' | 'updatedAt'> & { id?: string }): Promise<PatientRegistration> {
-    try {
-      const res = await fetch('/api/registrations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          const saved = json.data as PatientRegistration;
-          storageService.saveRegistration(saved);
-          return saved;
-        }
-      }
-    } catch {
-      // Fallback
+    const res = await fetch('/api/registrations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || 'Failed to save registration in database.');
     }
 
-    const existing = storageService.getRegistrationByPatientId(data.patientId);
-    const regId = data.id || existing?.id || `reg-${Date.now()}`;
-    const record: PatientRegistration = {
-      ...data,
-      id: regId,
-      updatedAt: new Date().toISOString()
-    };
-    storageService.saveRegistration(record);
-    return record;
+    const json = await res.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.message || 'Database did not return a valid registration record.');
+    }
+
+    return json.data as PatientRegistration;
   },
 
   async updateRegistrationStatus(patientId: string, status: RegistrationStatus): Promise<PatientRegistration | null> {
@@ -59,15 +62,21 @@ export const registrationService = {
     if (!existing) return null;
     return this.saveRegistration({
       ...existing,
-      registrationStatus: status
+      registrationStatus: status,
     });
   },
 
   async searchPatientsForRegistration(query: string): Promise<RegistrationSearchResult[]> {
     const cleanQuery = query.trim().toLowerCase();
-    const patients = storageService.getPatients();
-    const appointments = storageService.getAppointments();
-    const registrations = storageService.getRegistrations();
+    const [patRes, aptRes, regRes] = await Promise.all([
+      fetch('/api/patients').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/appointments').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/registrations').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+    ]);
+
+    const patients: Patient[] = Array.isArray(patRes?.data) ? patRes.data : [];
+    const appointments: Appointment[] = Array.isArray(aptRes?.data) ? aptRes.data : [];
+    const registrations: PatientRegistration[] = Array.isArray(regRes?.data) ? regRes.data : [];
 
     if (!cleanQuery) {
       return patients.slice(0, 8).map((patient) => {
@@ -78,7 +87,7 @@ export const registrationService = {
         return {
           patient,
           appointment: patientAppointments[0] || null,
-          registration: reg
+          registration: reg,
         };
       });
     }
@@ -90,7 +99,9 @@ export const registrationService = {
       const phoneMatch = p.phone.toLowerCase().includes(cleanQuery);
 
       const hasMatchingApt = appointments.some(
-        (a) => a.patientId === p.id && (a.appointmentCode.toLowerCase().includes(cleanQuery) || a.id.toLowerCase().includes(cleanQuery))
+        (a) =>
+          a.patientId === p.id &&
+          (a.appointmentCode.toLowerCase().includes(cleanQuery) || a.id.toLowerCase().includes(cleanQuery))
       );
 
       return patientIdMatch || nameMatch || phoneMatch || hasMatchingApt;
@@ -104,8 +115,8 @@ export const registrationService = {
       return {
         patient,
         appointment: patientAppointments[0] || null,
-        registration: reg
+        registration: reg,
       };
     });
-  }
+  },
 };

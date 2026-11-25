@@ -37,7 +37,8 @@ import type {
 } from '../types';
 import { patientService } from '../services/patientService';
 import { chargeService, type ChargeCaptureSearchResult } from '../services/chargeService';
-import { storageService } from '../services/storageService';
+import { registrationService } from '../services/registrationService';
+import { insuranceService } from '../services/insuranceService';
 
 interface ChargeCapturePageProps {
   preselectedPatientId?: string | null;
@@ -162,7 +163,7 @@ export const ChargeCapturePage: React.FC<ChargeCapturePageProps> = ({
   // ----------------------------------------------------
   // PATIENT DATA CONTEXT LOADER
   // ----------------------------------------------------
-  const applyPatientData = useCallback((
+  const applyPatientData = useCallback(async (
     pat: Patient,
     appt?: Appointment | null,
     reg?: PatientRegistration | null,
@@ -174,64 +175,57 @@ export const ChargeCapturePage: React.FC<ChargeCapturePageProps> = ({
     setShowSearchResults(false);
     setFormError('');
 
-    // 1. Linked Registration & Appointment
-    setLinkedRegistration(reg || storageService.getRegistrationByPatientId(pat.id));
-    if (appt) {
-      setLatestAppointment(appt);
-      setDoctorName(appt.doctor.name);
-      setDepartmentName(appt.departmentName);
-      setEncounterDate(appt.appointmentDate);
-      setVisitType(appt.appointmentType || 'Outpatient Consultation');
-    } else {
-      const allAppts = storageService.getAppointments();
-      const match = allAppts.find((a) => a.patientId === pat.id);
-      setLatestAppointment(match || null);
-      if (match) {
-        setDoctorName(match.doctor.name);
-        setDepartmentName(match.departmentName);
-        setEncounterDate(match.appointmentDate);
-        setVisitType(match.appointmentType || 'Outpatient Consultation');
-      }
+    const [fetchedReg, fetchedAppts, fetchedIns, fetchedChg] = await Promise.all([
+      reg !== undefined ? Promise.resolve(reg) : registrationService.getRegistration(pat.id),
+      appt !== undefined ? Promise.resolve(appt ? [appt] : []) : patientService.getPatientAppointmentHistory(pat.id),
+      ins !== undefined ? Promise.resolve(ins) : insuranceService.getInsurance(pat.id),
+      chg !== undefined ? Promise.resolve(chg) : chargeService.getByPatientId(pat.id),
+    ]);
+
+    setLinkedRegistration(fetchedReg);
+    const matchedAppt = fetchedAppts[0] || null;
+    setLatestAppointment(matchedAppt);
+    if (matchedAppt) {
+      setDoctorName(matchedAppt.doctor.name);
+      setDepartmentName(matchedAppt.departmentName);
+      setEncounterDate(matchedAppt.appointmentDate);
+      setVisitType(matchedAppt.appointmentType || 'Outpatient Consultation');
     }
 
-    // 2. Linked Insurance Info
-    const existingIns = ins || storageService.getInsuranceByPatientId(pat.id);
-    setLinkedInsurance(existingIns);
-    if (existingIns?.insuranceProvider) {
-      setInsuranceProvider(existingIns.insuranceProvider);
+    setLinkedInsurance(fetchedIns);
+    if (fetchedIns?.insuranceProvider) {
+      setInsuranceProvider(fetchedIns.insuranceProvider);
       setInsuranceVerificationStatus(
-        existingIns.insuranceStatus === 'Active'
+        fetchedIns.insuranceStatus === 'Active'
           ? 'Verified / Active'
-          : (existingIns.eligibilityStatus || 'Verified / Active')
+          : (fetchedIns.eligibilityStatus || 'Verified / Active')
       );
     }
 
-    // 3. Linked Charge Capture Encounter
-    const existingChg = chg || storageService.getChargeCaptureByPatientId(pat.id);
-    if (existingChg) {
-      setEncounterId(existingChg.id);
-      setEncounterDate(existingChg.encounterDate || new Date().toISOString().split('T')[0]);
-      setVisitType(existingChg.visitType || 'Outpatient Consultation');
-      setDoctorName(existingChg.doctorName || appt?.doctor?.name || '');
-      setDepartmentName(existingChg.departmentName || appt?.departmentName || '');
-      setInsuranceProvider(existingChg.insuranceProvider || existingIns?.insuranceProvider || '');
-      setInsuranceVerificationStatus(existingChg.insuranceVerificationStatus || 'Verified / Active');
-      setClaimStatus(existingChg.claimStatus || 'Draft');
-      setEncounterNotes(existingChg.notes || '');
+    if (fetchedChg) {
+      setEncounterId(fetchedChg.id);
+      setEncounterDate(fetchedChg.encounterDate || new Date().toISOString().split('T')[0]);
+      setVisitType(fetchedChg.visitType || 'Outpatient Consultation');
+      setDoctorName(fetchedChg.doctorName || matchedAppt?.doctor?.name || '');
+      setDepartmentName(fetchedChg.departmentName || matchedAppt?.departmentName || '');
+      setInsuranceProvider(fetchedChg.insuranceProvider || fetchedIns?.insuranceProvider || '');
+      setInsuranceVerificationStatus(fetchedChg.insuranceVerificationStatus || 'Verified / Active');
+      setClaimStatus(fetchedChg.claimStatus || 'Draft');
+      setEncounterNotes(fetchedChg.notes || '');
 
-      if (existingChg.items && existingChg.items.length > 0) {
-        setChargeItems(existingChg.items);
+      if (fetchedChg.items && fetchedChg.items.length > 0) {
+        setChargeItems(fetchedChg.items);
       } else {
         setChargeItems([]);
       }
     } else {
       setEncounterId(`CHG-${Math.floor(10000 + Math.random() * 90000)}`);
       setEncounterDate(new Date().toISOString().split('T')[0]);
-      setVisitType('Outpatient Consultation');
-      setDoctorName(appt?.doctor?.name || '');
-      setDepartmentName(appt?.departmentName || '');
-      setInsuranceProvider(existingIns?.insuranceProvider || '');
-      setInsuranceVerificationStatus(existingIns?.insuranceStatus ? 'Verified / Active' : 'Unverified');
+      setVisitType(matchedAppt?.appointmentType || 'Outpatient Consultation');
+      setDoctorName(matchedAppt?.doctor?.name || '');
+      setDepartmentName(matchedAppt?.departmentName || '');
+      setInsuranceProvider(fetchedIns?.insuranceProvider || '');
+      setInsuranceVerificationStatus(fetchedIns?.insuranceStatus ? 'Verified / Active' : 'Unverified');
       setClaimStatus('Draft');
       setEncounterNotes('');
       setChargeItems([]);

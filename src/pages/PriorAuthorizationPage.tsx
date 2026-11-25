@@ -35,7 +35,9 @@ import type {
   Department
 } from '../types';
 import { patientService } from '../services/patientService';
-import { storageService } from '../services/storageService';
+import { registrationService } from '../services/registrationService';
+import { insuranceService } from '../services/insuranceService';
+import { getTodayDateStr } from '../services/statsService';
 import {
   priorAuthService,
   PROCEDURE_PRESETS,
@@ -63,6 +65,7 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
   // Reference Data
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [patients, setPatients] = useState<Patient[]>([]);
 
   // Search State
   const [searchQuery, setSearchQuery] = useState('');
@@ -116,19 +119,21 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
 
-  // 1. Initial Reference Data & Storage Load
+  // 1. Initial Reference Data & Neon PostgreSQL Load
   useEffect(() => {
     const init = async () => {
-      const [docs, depts, auths] = await Promise.all([
+      const [docs, depts, auths, pats] = await Promise.all([
         doctorService.getAll(),
         departmentService.getAll(),
         priorAuthService.getAll(),
+        patientService.getAll(),
       ]);
       setDoctors(docs);
       setDepartments(depts);
       setAllAuthorizations(auths);
-      setAuthRequestId(priorAuthService.generateNextRequestId());
-      setRequestDate(storageService.getCurrentDate());
+      setPatients(pats);
+      setAuthRequestId(priorAuthService.generateNextRequestId(auths));
+      setRequestDate(getTodayDateStr());
 
       if (preselectedPatientId) {
         loadPatientContext(preselectedPatientId);
@@ -147,14 +152,14 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
     try {
       const patient = await patientService.getById(patientId);
       if (patient) {
-        applyPatientData(patient);
+        await applyPatientData(patient);
       }
     } catch {
       onError('Failed to load patient profile for prior authorization.');
     }
   };
 
-  const applyPatientData = (
+  const applyPatientData = async (
     patient: Patient,
     appt?: Appointment | null,
     reg?: PatientRegistration | null,
@@ -165,25 +170,17 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
     setSearchQuery(`${patient.firstName} ${patient.lastName} (${patient.patientId})`);
     setShowSearchResults(false);
 
-    // Linked Reg
-    const patientReg = reg !== undefined ? reg : storageService.getRegistrationByPatientId(patient.id);
+    const [patientReg, fetchedAppts, patientIns, auths] = await Promise.all([
+      reg !== undefined ? Promise.resolve(reg) : registrationService.getRegistration(patient.id),
+      appt !== undefined ? Promise.resolve(appt ? [appt] : []) : patientService.getPatientAppointmentHistory(patient.id),
+      ins !== undefined ? Promise.resolve(ins) : insuranceService.getInsurance(patient.id),
+      existingAuths !== undefined ? Promise.resolve(existingAuths) : priorAuthService.getByPatientId(patient.id),
+    ]);
+
     setLinkedRegistration(patientReg);
-
-    // Linked Appt
-    if (appt !== undefined) {
-      setLinkedAppointment(appt);
-    } else {
-      const allAppts = storageService.getAppointments();
-      const match = allAppts.find((a) => a.patientId === patient.id);
-      setLinkedAppointment(match || null);
-    }
-
-    // Linked Insurance
-    const patientIns = ins !== undefined ? ins : storageService.getInsuranceByPatientId(patient.id);
+    setLinkedAppointment(fetchedAppts[0] || null);
     setLinkedInsurance(patientIns);
 
-    // Find any existing prior auth for this patient
-    const auths = existingAuths !== undefined ? existingAuths : storageService.getPriorAuthByPatientId(patient.id);
     if (auths.length > 0) {
       const latest = auths[auths.length - 1];
       setActiveAuthResult(latest);
@@ -284,7 +281,7 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
       if (!authorizationRequired) {
         // Save as Not Required
         const newRecord: Omit<PriorAuthorization, 'id' | 'createdAt' | 'updatedAt'> = {
-          authorizationRequestId: editingAuthId ? authRequestId : priorAuthService.generateNextRequestId(),
+          authorizationRequestId: editingAuthId ? authRequestId : priorAuthService.generateNextRequestId(allAuthorizations),
           patientId: selectedPatient.id,
           appointmentId: linkedAppointment?.id,
           serviceName,
@@ -320,11 +317,11 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
         onSuccess(`Service saved: No Prior Authorization Required for ${serviceName}.`);
       } else {
         // Save as Pending (or preserve status if editing)
-        const currentExisting = editingAuthId ? storageService.getPriorAuthById(editingAuthId) : null;
+        const currentExisting = editingAuthId ? await priorAuthService.getById(editingAuthId) : null;
         const initialStatus: PriorAuthStatus = currentExisting?.status || 'Pending';
 
         const newRecord: Omit<PriorAuthorization, 'id' | 'createdAt' | 'updatedAt'> = {
-          authorizationRequestId: editingAuthId ? authRequestId : priorAuthService.generateNextRequestId(),
+          authorizationRequestId: editingAuthId ? authRequestId : priorAuthService.generateNextRequestId(allAuthorizations),
           patientId: selectedPatient.id,
           appointmentId: linkedAppointment?.id,
           serviceName,
@@ -364,8 +361,9 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
         }
 
         setActiveAuthResult(saved);
-        await refreshAuthorizationsList();
-        setAuthRequestId(priorAuthService.generateNextRequestId());
+        const updatedList = await priorAuthService.getAll();
+        setAllAuthorizations(updatedList);
+        setAuthRequestId(priorAuthService.generateNextRequestId(updatedList));
       }
     } catch (err: any) {
       setFormError(err?.message || 'Failed to submit authorization request.');
@@ -382,11 +380,11 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
     setServiceName(auth.serviceName);
     setProcedureCode(auth.procedureCode);
     setDiagnosisCode(auth.diagnosisCode);
-    setSelectedDeptId(auth.departmentId || 'dept-neuro');
-    setSelectedDoctorId(auth.doctorId || 'doc-chen');
-    setServiceDate(auth.serviceDate || '2024-06-05');
-    setRequestDate(auth.requestDate || '2024-05-31');
-    setEstimatedCost(auth.estimatedCost || 1500);
+    setSelectedDeptId(auth.departmentId || '');
+    setSelectedDoctorId(auth.doctorId || '');
+    setServiceDate(auth.serviceDate || getTodayDateStr());
+    setRequestDate(auth.requestDate || getTodayDateStr());
+    setEstimatedCost(auth.estimatedCost ?? 0);
     setMedicalJustification(auth.medicalJustification || '');
     setSupportingDocs(auth.supportingDocuments || []);
     setAuthorizationRequired(auth.authorizationRequired);
@@ -406,12 +404,13 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
     setStatusModalTargetStatus(initialTarget);
 
     if (initialTarget === 'Approved') {
+      const todayStr = getTodayDateStr();
       setStatusModalAuthNum(auth.authorizationNumber || priorAuthService.generateAuthNumber(auth.insuranceProvider));
-      setStatusModalValidFrom(auth.validFrom || storageService.getCurrentDate());
+      setStatusModalValidFrom(auth.validFrom || todayStr);
       if (auth.validUntil) {
         setStatusModalValidUntil(auth.validUntil);
       } else {
-        const d = new Date(storageService.getCurrentDate());
+        const d = new Date(todayStr);
         d.setMonth(d.getMonth() + 3);
         setStatusModalValidUntil(d.toISOString().split('T')[0]);
       }
@@ -473,7 +472,7 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
     const cleanQ = tableSearchQuery.trim().toLowerCase();
     if (!cleanQ) return matchesStatus;
 
-    const patient = storageService.getPatients().find((p) => p.id === item.patientId);
+    const patient = patients.find((p) => p.id === item.patientId);
     const pName = patient ? `${patient.firstName} ${patient.lastName}`.toLowerCase() : '';
     const pCode = patient ? patient.patientId.toLowerCase() : '';
 
@@ -1671,7 +1670,7 @@ export const PriorAuthorizationPage: React.FC<PriorAuthorizationPageProps> = ({
             <tbody>
               {filteredTableItems.length > 0 ? (
                 filteredTableItems.map((auth) => {
-                  const patient = storageService.getPatients().find((p) => p.id === auth.patientId);
+                  const patient = patients.find((p) => p.id === auth.patientId);
                   const badgeInfo = getStatusBadgeStyle(auth.status);
                   const Icon = badgeInfo.icon;
 

@@ -395,7 +395,9 @@ export const DepartmentsPage: React.FC<DepartmentsPageProps> = ({
           <div className="dept-stat-info">
             <span className="dept-stat-label">Active Specialties</span>
             <span className="dept-stat-value">{activeDepartments}</span>
-            <span className="dept-stat-sub">100% Operational</span>
+            <span className="dept-stat-sub">
+              {totalDepartments > 0 ? `${Math.round((activeDepartments / totalDepartments) * 100)}% Operational` : '0% Operational'}
+            </span>
           </div>
         </div>
 

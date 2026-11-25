@@ -2,6 +2,18 @@ import type { Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { query } from '../db.ts';
 
+function formatDateField(val: any): string {
+  if (!val) return '';
+  if (val instanceof Date) {
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const str = String(val).trim();
+  return str.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(str) ? str.slice(0, 10) : str;
+}
+
 function mapPatientRow(row: any) {
   if (!row) return null;
   return {
@@ -9,7 +21,7 @@ function mapPatientRow(row: any) {
     patientId: row.patient_id,
     firstName: row.first_name,
     lastName: row.last_name,
-    dob: row.dob,
+    dob: formatDateField(row.dob || row.date_of_birth),
     gender: row.gender,
     phone: row.phone,
     email: row.email || '',
@@ -131,7 +143,7 @@ export async function createPatient(req: Request, res: Response): Promise<void> 
         patientId,
         cleanFirst,
         cleanLast,
-        body.dob || '',
+        body.dob && String(body.dob).trim() ? String(body.dob).trim() : null,
         body.gender || 'Other',
         cleanPhone,
         cleanEmail,
@@ -172,7 +184,7 @@ export async function updatePatient(req: Request, res: Response): Promise<void> 
         id,
         body.firstName,
         body.lastName,
-        body.dob,
+        body.dob && String(body.dob).trim() ? String(body.dob).trim() : null,
         body.gender,
         body.phone,
         body.email,

@@ -33,7 +33,7 @@ import type {
   MedicalCodingRecord,
   CodingStatus
 } from '../types';
-import { storageService } from '../services/storageService';
+import { patientService } from '../services/patientService';
 import {
   medicalCodingService,
   STANDARD_ICD10_CODES,
@@ -179,8 +179,8 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
   onSuccess,
   onError
 }) => {
-  // Available patients & encounters
-  const [patients] = useState<Patient[]>(() => storageService.getPatients());
+  // Available patients & encounters (fetched from Neon PostgreSQL)
+  const [patients, setPatients] = useState<Patient[]>([]);
   const [selectedPatientId, setSelectedPatientId] = useState<string>(() => {
     return preselectedPatientId || '';
   });
@@ -196,7 +196,7 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
     1: true,
     2: true,
     3: true,
-    4: true, // Expanded by default as required
+    4: true,
     5: true
   });
   const [candidateActiveCategory, setCandidateActiveCategory] = useState<'Diagnosis' | 'Procedures'>('Diagnosis');
@@ -209,9 +209,7 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
   const [selectedAiPxCodes, setSelectedAiPxCodes] = useState<Set<string>>(new Set());
 
   // Active Coding Record
-  const [codingRecord, setCodingRecord] = useState<MedicalCodingRecord | null>(() => {
-    return preselectedPatientId ? medicalCodingService.getOrCreateCodingRecord(preselectedPatientId) : null;
-  });
+  const [codingRecord, setCodingRecord] = useState<MedicalCodingRecord | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [lastValidatedAt, setLastValidatedAt] = useState<string | null>(() => new Date().toLocaleTimeString());
 
@@ -224,8 +222,15 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
   const [isEditProcedureModalOpen, setIsEditProcedureModalOpen] = useState<boolean>(false);
   const [editingProcedure, setEditingProcedure] = useState<ProcedureCodeItem | null>(null);
 
-  // Sync when preselectedPatientId changes externally
+  // Load patients list from Neon PostgreSQL on mount
   useEffect(() => {
+    patientService.getAll().then((list) => setPatients(list)).catch(() => setPatients([]));
+  }, []);
+
+  // Load coding record whenever selectedPatientId or preselectedPatientId changes
+  useEffect(() => {
+    const targetId = preselectedPatientId || selectedPatientId;
+    if (!targetId) return;
     if (preselectedPatientId && preselectedPatientId !== selectedPatientId) {
       setSelectedPatientId(preselectedPatientId);
       setAdmissionNoteText('');
@@ -233,10 +238,11 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
       setAiError(null);
       setSelectedAiDxCodes(new Set());
       setSelectedAiPxCodes(new Set());
-      const record = medicalCodingService.getOrCreateCodingRecord(preselectedPatientId);
+    }
+    medicalCodingService.getOrCreateCodingRecord(targetId).then((record) => {
       setCodingRecord(record);
       setLastValidatedAt(new Date().toLocaleTimeString());
-    }
+    });
   }, [preselectedPatientId, selectedPatientId]);
 
   // Selected Patient Details
@@ -249,7 +255,11 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
     if (!searchQuery.trim()) {
       return patients.slice(0, 5);
     }
-    return medicalCodingService.searchEncounters(searchQuery).map((r) => r.patient);
+    const q = searchQuery.trim().toLowerCase();
+    return patients.filter((p) => {
+      const fullName = `${p.firstName} ${p.lastName}`.toLowerCase();
+      return fullName.includes(q) || p.patientId.toLowerCase().includes(q) || p.phone.includes(q);
+    });
   }, [searchQuery, patients]);
 
   // Dynamic Validation Checks
@@ -461,7 +471,7 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
     setSelectedAiPxCodes(new Set());
   };
 
-  const handleConfirmFinalCodes = () => {
+  const handleConfirmFinalCodes = async () => {
     if (!codingRecord) return;
 
     if (!aiResponse) {
@@ -565,7 +575,7 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
 
     setCodingRecord(nextRecord);
     try {
-      medicalCodingService.saveCoding(nextRecord, false);
+      await medicalCodingService.saveCoding(nextRecord, false);
       setLastValidatedAt(new Date().toLocaleTimeString());
       onSuccess(
         `✓ Confirmed ${confirmedDxList.length} diagnosis & ${confirmedPxList.length} procedure codes into Final Selected Codes!`
@@ -576,7 +586,7 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
   };
 
   // Patient Selection Handler
-  const handleSelectPatient = (patientId: string) => {
+  const handleSelectPatient = async (patientId: string) => {
     setSelectedPatientId(patientId);
     setIsSearchDropdownOpen(false);
     setSearchQuery('');
@@ -585,7 +595,7 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
     setAiError(null);
     setSelectedAiDxCodes(new Set());
     setSelectedAiPxCodes(new Set());
-    const record = medicalCodingService.getOrCreateCodingRecord(patientId);
+    const record = await medicalCodingService.getOrCreateCodingRecord(patientId);
     setCodingRecord(record);
     setLastValidatedAt(new Date().toLocaleTimeString());
   };
@@ -766,13 +776,13 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
   };
 
   // Save Draft
-  const handleSaveDraft = () => {
+  const handleSaveDraft = async () => {
     if (!codingRecord) return;
     setIsSaving(true);
     try {
-      medicalCodingService.saveCoding(codingRecord, false);
+      await medicalCodingService.saveCoding(codingRecord, false);
       setIsSaving(false);
-      onSuccess('Medical coding draft saved successfully.');
+      onSuccess('Medical coding draft saved to Neon PostgreSQL.');
     } catch {
       setIsSaving(false);
       onError('Failed to save coding draft.');
@@ -780,7 +790,7 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
   };
 
   // Complete Coding
-  const handleCompleteCoding = () => {
+  const handleCompleteCoding = async () => {
     if (!codingRecord) return;
     const result = medicalCodingService.validateCoding(codingRecord);
 
@@ -791,7 +801,7 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
 
     setIsSaving(true);
     try {
-      const saved = medicalCodingService.saveCoding(codingRecord, true);
+      const saved = await medicalCodingService.saveCoding(codingRecord, true);
       setCodingRecord(saved);
       setIsSaving(false);
       onSuccess('✓ Medical Coding successfully completed and marked READY FOR CLAIM CREATION!');
@@ -802,14 +812,14 @@ export const MedicalCodingPage: React.FC<MedicalCodingPageProps> = ({
   };
 
   // Proceed to Claim Creation
-  const handleProceedToClaimCreation = () => {
+  const handleProceedToClaimCreation = async () => {
     if (!validationResult.canProceedToClaim) {
       onError('Please ensure all captured services have valid procedure and diagnosis codes before proceeding.');
       return;
     }
 
     if (codingRecord) {
-      medicalCodingService.saveCoding(codingRecord, true);
+      await medicalCodingService.saveCoding(codingRecord, true);
     }
 
     onSuccess('Redirecting to Module 7: Claim Creation...');

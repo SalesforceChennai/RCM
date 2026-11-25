@@ -63,22 +63,6 @@ export const config = {
     return getEnvVariable('GROQ_MODEL', 'openai/gpt-oss-120b');
   },
   get databaseUrl(): string {
-    return getEnvVariable('DATABASE_URL', 'postgresql://postgres:admin@localhost:5432/medicare_rcm');
-  },
-  get pgHost(): string {
-    return getEnvVariable('PGHOST', 'localhost');
-  },
-  get pgPort(): number {
-    const val = parseInt(getEnvVariable('PGPORT', '5432'), 10);
-    return isNaN(val) ? 5432 : val;
-  },
-  get pgUser(): string {
-    return getEnvVariable('PGUSER', 'postgres');
-  },
-  get pgPassword(): string {
-    return getEnvVariable('PGPASSWORD', 'admin');
-  },
-  get pgDatabase(): string {
-    return getEnvVariable('PGDATABASE', 'medicare_rcm');
+    return getEnvVariable('DATABASE_URL', '');
   }
 };

@@ -35,7 +35,7 @@ export async function getPostgresCheckpointer(): Promise<PostgresSaver> {
     try {
       await checkpointerInstance.setup();
       isCheckpointerInitialized = true;
-      console.log('✅ [LangGraph Memory] PostgreSQL checkpointer tables verified in rcm_database');
+      console.log('✅ [LangGraph Memory] PostgreSQL checkpointer tables verified in Neon PostgreSQL');
     } catch (err: any) {
       console.warn('[LangGraph Memory] Checkpointer setup notice:', err?.message);
       // In case tables were already initialized concurrently

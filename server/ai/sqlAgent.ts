@@ -88,7 +88,7 @@ export async function executeSafeReadOnlyQuery(sql: string, params: any[] = []):
 // ============================================================================
 
 export const RCM_SCHEMA_CONTEXT = `
-PostgreSQL Database: rcm_database
+PostgreSQL Database: neondb (Neon Cloud PostgreSQL)
 
 Core Tables & Schema:
 1. patients (
@@ -309,7 +309,7 @@ export async function generateAndExecuteSqlWithLangChain(
 
   try {
     const prompt = `You are a certified PostgreSQL DBA and Healthcare Revenue Cycle Management (RCM) Analytics expert.
-Given the schema below for 'rcm_database', generate a single, read-only SELECT SQL query to answer the user request.
+Given the schema below for 'neondb' (Neon PostgreSQL), generate a single, read-only SELECT SQL query to answer the user request.
 
 DATABASE SCHEMA:
 ${RCM_SCHEMA_CONTEXT}

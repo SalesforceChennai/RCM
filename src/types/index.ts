@@ -173,6 +173,8 @@ export interface InsuranceInfo {
   treatmentBreakdown?: TreatmentCostItem[];
   billingBreakdown?: TreatmentBillingItem[];
   requestId?: string;
+  timeline?: RequestTimelineStep[];
+  messages?: ChatMessage[];
   updatedAt: string;
 }
 

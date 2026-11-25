@@ -56,3 +56,5 @@ ehthumbs.db
 # Temporary / Scratch files
 tmp/
 temp/
+
+.vercel

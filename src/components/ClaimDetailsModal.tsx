@@ -320,7 +320,7 @@ export const ClaimDetailsModal: React.FC<ClaimDetailsModalProps> = ({
           {/* Footer Notice */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 16, borderTop: '1px solid #e2e8f0' }}>
             <span style={{ fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>
-              Demo Prediction – Trained using synthetic historical claim data
+              Random Forest Prediction – Evaluated against Neon PostgreSQL claims registry
             </span>
             <button
               type="button"

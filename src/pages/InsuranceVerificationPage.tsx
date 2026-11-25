@@ -48,7 +48,7 @@ import type {
 } from '../types';
 import { patientService } from '../services/patientService';
 import { insuranceService, type InsuranceSearchResult } from '../services/insuranceService';
-import { storageService } from '../services/storageService';
+import { registrationService } from '../services/registrationService';
 
 interface InsuranceVerificationPageProps {
   preselectedPatientId?: string | null;
@@ -142,7 +142,7 @@ export const InsuranceVerificationPage: React.FC<InsuranceVerificationPageProps>
     }
   }, [activeCommunicationRequest?.messages]);
 
-  const applyPatientData = useCallback((
+  const applyPatientData = useCallback(async (
     pat: Patient,
     appt?: Appointment | null,
     reg?: PatientRegistration | null,
@@ -153,34 +153,26 @@ export const InsuranceVerificationPage: React.FC<InsuranceVerificationPageProps>
     setShowSearchResults(false);
     setFormError('');
 
-    // 1. Linked Registration
-    if (reg) {
-      setLinkedRegistration(reg);
-    } else {
-      const existingReg = storageService.getRegistrationByPatientId(pat.id);
-      setLinkedRegistration(existingReg);
-    }
+    const [fetchedReg, fetchedAppts, fetchedIns, existingComm] = await Promise.all([
+      reg !== undefined ? Promise.resolve(reg) : registrationService.getRegistration(pat.id),
+      appt !== undefined ? Promise.resolve(appt ? [appt] : []) : patientService.getPatientAppointmentHistory(pat.id),
+      ins !== undefined ? Promise.resolve(ins) : insuranceService.getInsurance(pat.id),
+      insuranceService.getInsuranceCommunication(pat.id),
+    ]);
 
-    // 2. Linked Appointment
-    if (appt) {
-      setLatestAppointment(appt);
-    } else {
-      const allAppts = storageService.getAppointments();
-      const match = allAppts.find((a) => a.patientId === pat.id);
-      setLatestAppointment(match || null);
-    }
+    setLinkedRegistration(fetchedReg);
+    setLatestAppointment(fetchedAppts[0] || null);
 
-    // 3. Insurance Details
-    const existingIns = ins || storageService.getInsuranceByPatientId(pat.id);
+    const existingIns = fetchedIns;
     if (existingIns) {
-      setInsuranceProvider(existingIns.insuranceProvider || 'Blue Cross Blue Shield');
+      setInsuranceProvider(existingIns.insuranceProvider || '');
       setMemberId(existingIns.memberId || '');
       setPolicyNumber(existingIns.policyNumber || '');
       setPolicyHolderName(existingIns.policyHolderName || `${pat.firstName} ${pat.lastName}`);
       setRelationshipToPatient(existingIns.relationshipToPatient || 'Self');
-      setGroupNumber(existingIns.groupNumber || 'GRP-STANDARD-01');
-      setEffectiveDate(existingIns.effectiveDate || '2024-01-01');
-      setExpiryDate(existingIns.expiryDate || '2024-12-31');
+      setGroupNumber(existingIns.groupNumber || '');
+      setEffectiveDate(existingIns.effectiveDate || '');
+      setExpiryDate(existingIns.expiryDate || '');
 
       if (existingIns.billingBreakdown && existingIns.billingBreakdown.length > 0) {
         setBillingBreakdown(existingIns.billingBreakdown);
@@ -188,26 +180,19 @@ export const InsuranceVerificationPage: React.FC<InsuranceVerificationPageProps>
         setBillingBreakdown(DEFAULT_BILLING_SERVICES);
       }
 
-      setRequestedAmount(existingIns.requestedAmount || 2000);
+      setRequestedAmount(existingIns.requestedAmount || 0);
       setInsuranceStatus(existingIns.insuranceStatus || 'Active');
       setEligibilityStatus(existingIns.eligibilityStatus || 'Eligible');
-      setCoverageStatus(existingIns.coverageStatus || 'Consultation, Outpatient Care, and Diagnostic Procedures');
-      setCopayAmount(existingIns.copayAmount !== undefined ? existingIns.copayAmount : 20);
-      setDeductible(existingIns.deductible !== undefined ? existingIns.deductible : 500);
-      setCoinsurance(existingIns.coinsurance !== undefined ? existingIns.coinsurance : 20);
-      setCoveredServices(
-        existingIns.coveredServices || [
-          'Outpatient Consultation',
-          'Diagnostic Lab Testing',
-          'Preventative Screenings',
-          'Specialist Consultations'
-        ]
-      );
+      setCoverageStatus(existingIns.coverageStatus || '');
+      setCopayAmount(existingIns.copayAmount !== undefined ? existingIns.copayAmount : 0);
+      setDeductible(existingIns.deductible !== undefined ? existingIns.deductible : 0);
+      setCoinsurance(existingIns.coinsurance !== undefined ? existingIns.coinsurance : 0);
+      setCoveredServices(existingIns.coveredServices || []);
       setVerificationResult(existingIns.verificationResult || null);
 
-      const status: ProviderVerificationStatus = existingIns.providerStatus || (existingIns.memberId ? 'Accepted' : 'Accepted');
+      const status: ProviderVerificationStatus = existingIns.providerStatus || 'Accepted';
       setProviderStatus(status);
-      setProviderStatusCheckedAt(existingIns.providerStatusCheckedAt || existingIns.updatedAt || new Date().toISOString());
+      setProviderStatusCheckedAt(existingIns.providerStatusCheckedAt || existingIns.updatedAt || '');
       setProviderStatusReason(
         existingIns.providerStatusReason ||
         (status === 'Accepted'
@@ -217,7 +202,6 @@ export const InsuranceVerificationPage: React.FC<InsuranceVerificationPageProps>
           : 'This insurance provider has declined the request.')
       );
     } else {
-      // Clean blank state for fresh patient entry
       setInsuranceProvider('');
       setMemberId('');
       setPolicyNumber('');
@@ -241,8 +225,6 @@ export const InsuranceVerificationPage: React.FC<InsuranceVerificationPageProps>
       setProviderStatusReason('');
     }
 
-    // 4. Load Step 3 Insurance Request Communication
-    const existingComm = storageService.getInsuranceCommunicationByPatientId(pat.id);
     if (existingComm) {
       setActiveCommunicationRequest(existingComm);
       if (existingComm.billingBreakdown && existingComm.billingBreakdown.length > 0) {
@@ -376,7 +358,7 @@ export const InsuranceVerificationPage: React.FC<InsuranceVerificationPageProps>
         providerStatusReason
       });
 
-      onSuccess('Insurance policy and treatment & billing breakdown saved locally.');
+      onSuccess('Insurance policy and treatment & billing breakdown saved to Neon PostgreSQL database.');
     } catch {
       onError('Failed to save insurance details.');
     } finally {

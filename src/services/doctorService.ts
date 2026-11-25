@@ -1,5 +1,4 @@
 import type { Doctor } from '../types';
-import { storageService } from './storageService';
 
 export const doctorService = {
   async getAll(): Promise<Doctor[]> {
@@ -8,16 +7,13 @@ export const doctorService = {
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
-          if (json.data.length > 0) {
-            storageService.setDoctors(json.data);
-            return json.data;
-          }
+          return json.data;
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[doctorService] Failed to fetch doctors:', err);
     }
-    return storageService.getDoctors();
+    return [];
   },
 
   async getById(id: string): Promise<Doctor | null> {
@@ -29,11 +25,10 @@ export const doctorService = {
           return json.data;
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[doctorService] Failed to fetch doctor:', err);
     }
-    const docs = storageService.getDoctors();
-    return docs.find((d) => d.id === id) || null;
+    return null;
   },
 
   async getByDepartment(departmentId: string): Promise<Doctor[]> {
@@ -48,12 +43,10 @@ export const doctorService = {
           return json.data;
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[doctorService] Failed to fetch doctors by department:', err);
     }
-    const docs = storageService.getDoctors();
-    if (!departmentId || departmentId === 'all') return docs;
-    return docs.filter((d) => d.departmentId === departmentId);
+    return [];
   },
 
   async create(doctor: Omit<Doctor, 'id'> & { id?: string }): Promise<Doctor> {
@@ -72,10 +65,6 @@ export const doctorService = {
     if (!json.success || !json.data) {
       throw new Error(json.message || 'Failed to save doctor.');
     }
-
-    const current = storageService.getDoctors();
-    const updated = [...current.filter(d => d.id !== json.data.id), json.data];
-    storageService.setDoctors(updated);
 
     return json.data;
   },
@@ -97,10 +86,6 @@ export const doctorService = {
       throw new Error(json.message || 'Failed to update doctor.');
     }
 
-    const current = storageService.getDoctors();
-    const updated = current.map(d => d.id === id ? { ...d, ...json.data } : d);
-    storageService.setDoctors(updated);
-
     return json.data;
   },
 
@@ -113,8 +98,5 @@ export const doctorService = {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.message || 'Failed to delete doctor from database.');
     }
-
-    const current = storageService.getDoctors();
-    storageService.setDoctors(current.filter(d => d.id !== id));
-  }
+  },
 };

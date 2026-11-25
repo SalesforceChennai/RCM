@@ -1,5 +1,4 @@
 import type { DashboardStats, Appointment, CardFilterType } from '../types';
-import { storageService } from './storageService';
 
 export function getTodayDateStr(): string {
   const now = new Date();
@@ -69,28 +68,16 @@ export const statsService = {
           return json.data as DashboardStats;
         }
       }
-    } catch {
-      // Continue to fallback
-    }
-
-    let appointments: Appointment[] = [];
-    try {
-      const res = await fetch('/api/appointments');
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && Array.isArray(json.data)) {
-          appointments = json.data;
-          storageService.setAppointments(appointments);
-        }
-      }
     } catch (err) {
-      console.warn('[statsService] Error fetching live appointments from API, using cached data:', err);
+      console.error('[statsService] Error fetching dashboard stats from API:', err);
     }
 
-    if (appointments.length === 0) {
-      appointments = storageService.getAppointments();
-    }
-
-    return computeDashboardStats(appointments, refDate);
-  }
+    return {
+      todayAppointmentsCount: 0,
+      upcomingAppointmentsCount: 0,
+      completedAppointmentsCount: 0,
+      cancelledAppointmentsCount: 0,
+      noShowAppointmentsCount: 0,
+    };
+  },
 };

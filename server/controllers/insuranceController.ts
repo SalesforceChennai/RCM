@@ -34,6 +34,8 @@ function mapInsuranceRow(row: any) {
     treatmentBreakdown: Array.isArray(row.treatment_breakdown) ? row.treatment_breakdown : [],
     billingBreakdown: Array.isArray(row.billing_breakdown) ? row.billing_breakdown : [],
     requestId: row.request_id || undefined,
+    timeline: Array.isArray(row.timeline) ? row.timeline : [],
+    messages: Array.isArray(row.messages) ? row.messages : [],
     updatedAt: row.updated_at,
   };
 }
@@ -96,13 +98,17 @@ export async function saveInsurance(req: Request, res: Response): Promise<void> 
           covered_services = COALESCE($16, covered_services),
           verification_result = COALESCE($17, verification_result),
           provider_status = COALESCE($18, provider_status),
-          treatment_amount = COALESCE($19, treatment_amount),
-          requested_amount = COALESCE($20, requested_amount),
-          patient_responsibility_amount = COALESCE($21, patient_responsibility_amount),
-          additional_charges = COALESCE($22, additional_charges),
-          treatment_breakdown = COALESCE($23, treatment_breakdown),
-          billing_breakdown = COALESCE($24, billing_breakdown),
-          request_id = COALESCE($25, request_id),
+          provider_status_checked_at = COALESCE($19, provider_status_checked_at),
+          provider_status_reason = COALESCE($20, provider_status_reason),
+          treatment_amount = COALESCE($21, treatment_amount),
+          requested_amount = COALESCE($22, requested_amount),
+          patient_responsibility_amount = COALESCE($23, patient_responsibility_amount),
+          additional_charges = COALESCE($24, additional_charges),
+          treatment_breakdown = COALESCE($25, treatment_breakdown),
+          billing_breakdown = COALESCE($26, billing_breakdown),
+          request_id = COALESCE($27, request_id),
+          timeline = COALESCE($28, timeline),
+          messages = COALESCE($29, messages),
           updated_at = NOW()
         WHERE patient_id = $1
         RETURNING *`,
@@ -125,6 +131,8 @@ export async function saveInsurance(req: Request, res: Response): Promise<void> 
           body.coveredServices ? JSON.stringify(body.coveredServices) : null,
           body.verificationResult ? JSON.stringify(body.verificationResult) : null,
           body.providerStatus,
+          body.providerStatusCheckedAt ? new Date(body.providerStatusCheckedAt) : null,
+          body.providerStatusReason || null,
           body.treatmentAmount,
           body.requestedAmount,
           body.patientResponsibilityAmount,
@@ -132,6 +140,8 @@ export async function saveInsurance(req: Request, res: Response): Promise<void> 
           body.treatmentBreakdown ? JSON.stringify(body.treatmentBreakdown) : null,
           body.billingBreakdown ? JSON.stringify(body.billingBreakdown) : null,
           body.requestId,
+          body.timeline ? JSON.stringify(body.timeline) : null,
+          body.messages ? JSON.stringify(body.messages) : null,
         ]
       );
     } else {
@@ -140,10 +150,12 @@ export async function saveInsurance(req: Request, res: Response): Promise<void> 
           id, patient_id, appointment_id, insurance_provider, member_id, policy_number,
           policy_holder_name, relationship_to_patient, group_number, effective_date, expiry_date,
           insurance_status, eligibility_status, coverage_status, copay_amount, deductible, coinsurance,
-          covered_services, verification_result, provider_status, treatment_amount, requested_amount,
-          patient_responsibility_amount, additional_charges, treatment_breakdown, billing_breakdown, request_id
+          covered_services, verification_result, provider_status, provider_status_checked_at,
+          provider_status_reason, treatment_amount, requested_amount,
+          patient_responsibility_amount, additional_charges, treatment_breakdown, billing_breakdown,
+          request_id, timeline, messages
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
         ) RETURNING *`,
         [
           id,
@@ -166,6 +178,8 @@ export async function saveInsurance(req: Request, res: Response): Promise<void> 
           JSON.stringify(body.coveredServices || []),
           body.verificationResult ? JSON.stringify(body.verificationResult) : null,
           body.providerStatus || null,
+          body.providerStatusCheckedAt ? new Date(body.providerStatusCheckedAt) : null,
+          body.providerStatusReason || null,
           body.treatmentAmount || null,
           body.requestedAmount || null,
           body.patientResponsibilityAmount || null,
@@ -173,6 +187,8 @@ export async function saveInsurance(req: Request, res: Response): Promise<void> 
           JSON.stringify(body.treatmentBreakdown || []),
           JSON.stringify(body.billingBreakdown || []),
           body.requestId || null,
+          JSON.stringify(body.timeline || []),
+          JSON.stringify(body.messages || []),
         ]
       );
     }

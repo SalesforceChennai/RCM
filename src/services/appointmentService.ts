@@ -1,6 +1,5 @@
 import type { Appointment, AppointmentFilterParams, AppointmentStatus, Doctor, TimeSlot } from '../types';
-import { storageService } from './storageService';
-import { filterAppointmentsByCard, getTodayDateStr } from './statsService';
+import { doctorService } from './doctorService';
 
 export function parseTimeToMinutes(timeStr: string): number {
   if (!timeStr) return 0;
@@ -60,6 +59,9 @@ export const appointmentService = {
     limit: number;
     totalPages: number;
   }> {
+    const page = params.page || 1;
+    const limit = params.limit || 6;
+
     try {
       const qParams = new URLSearchParams();
       if (params.date && params.date !== 'all') qParams.set('date', params.date);
@@ -78,21 +80,7 @@ export const appointmentService = {
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const all = json.data as Appointment[];
-          // Only cache in storageService if an unfiltered query is run, so we don't clobber the cached dataset with a small subset
-          const isUnfiltered =
-            (!params.cardFilter || params.cardFilter === 'all') &&
-            (!params.date || params.date === 'all') &&
-            (!params.status || params.status === 'All') &&
-            (!params.doctorId || params.doctorId === 'all') &&
-            (!params.departmentId || params.departmentId === 'all') &&
-            !params.searchQuery;
-          if (isUnfiltered && all.length > 0) {
-            storageService.setAppointments(all);
-          }
-
           const total = all.length;
-          const page = params.page || 1;
-          const limit = params.limit || 6;
           const totalPages = Math.max(1, Math.ceil(total / limit));
           const startIndex = (page - 1) * limit;
           const paginated = all.slice(startIndex, startIndex + limit);
@@ -102,69 +90,36 @@ export const appointmentService = {
             total,
             page,
             limit,
-            totalPages
+            totalPages,
           };
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[appointmentService] Failed to fetch appointments:', err);
     }
-
-    let appointments = storageService.getAppointments();
-    const todayDate = params.referenceDate || getTodayDateStr();
-
-    // 1. Apply Card Filter if specified
-    if (params.cardFilter && params.cardFilter !== 'all') {
-      appointments = filterAppointmentsByCard(appointments, params.cardFilter, todayDate);
-    }
-
-    // 2. Apply Date Filter (if cardFilter is not today or date is explicitly set)
-    if (params.date && params.date !== 'all') {
-      appointments = appointments.filter((a) => a.appointmentDate === params.date);
-    }
-    if (params.doctorId && params.doctorId !== 'all') {
-      appointments = appointments.filter((a) => a.doctorId === params.doctorId);
-    }
-    if (params.departmentId && params.departmentId !== 'all') {
-      appointments = appointments.filter((a) => a.departmentId === params.departmentId);
-    }
-    if (params.status && params.status !== 'All') {
-      appointments = appointments.filter((a) => a.status === params.status);
-    }
-    if (params.searchQuery && params.searchQuery.trim()) {
-      const q = params.searchQuery.trim().toLowerCase();
-      appointments = appointments.filter((a) => {
-        return (
-          a.appointmentCode.toLowerCase().includes(q) ||
-          a.patient.name.toLowerCase().includes(q) ||
-          a.patient.patientCode.toLowerCase().includes(q) ||
-          a.patient.phone.includes(q) ||
-          a.doctor.name.toLowerCase().includes(q)
-        );
-      });
-    }
-
-    appointments.sort((a, b) => {
-      if (a.appointmentDate !== b.appointmentDate) {
-        return a.appointmentDate.localeCompare(b.appointmentDate);
-      }
-      return a.appointmentTime.localeCompare(b.appointmentTime);
-    });
-
-    const total = appointments.length;
-    const page = params.page || 1;
-    const limit = params.limit || 6;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const startIndex = (page - 1) * limit;
-    const paginated = appointments.slice(startIndex, startIndex + limit);
 
     return {
-      data: paginated,
-      total,
+      data: [],
+      total: 0,
       page,
       limit,
-      totalPages
+      totalPages: 1,
     };
+  },
+
+  async getAllRaw(): Promise<Appointment[]> {
+    try {
+      const res = await fetch('/api/appointments');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          return json.data as Appointment[];
+        }
+      }
+    } catch (err) {
+      console.error('[appointmentService] Failed to fetch all appointments:', err);
+    }
+    return [];
   },
 
   async getMonthlyAppointments(monthStr: string, filters: Omit<AppointmentFilterParams, 'month'> = {}): Promise<Appointment[]> {
@@ -198,25 +153,28 @@ export const appointmentService = {
           return json.data;
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[appointmentService] Failed to fetch appointment by ID:', err);
     }
-    const list = storageService.getAppointments();
-    return list.find((a) => a.id === id || a.appointmentCode.toLowerCase() === id.toLowerCase()) || null;
+    return null;
   },
 
   async getDoctorAvailability(doctorId: string, date: string, selectedTime?: string): Promise<TimeSlot[]> {
-    const doctors = storageService.getDoctors();
-    const doctor = doctors.find((d) => d.id === doctorId);
+    const [doctor, dateRes] = await Promise.all([
+      doctorService.getById(doctorId),
+      fetch(`/api/appointments?doctorId=${encodeURIComponent(doctorId)}&date=${encodeURIComponent(date)}`)
+        .then((r) => (r.ok ? r.json() : { data: [] }))
+        .catch(() => ({ data: [] })),
+    ]);
 
     const start = doctor?.workingHours?.start || '09:00 AM';
     const end = doctor?.workingHours?.end || '05:00 PM';
     const generatedSlots = generateDoctorTimeSlots(start, end, 30);
 
-    const appointments = storageService.getAppointments();
+    const appointments: Appointment[] = Array.isArray(dateRes?.data) ? dateRes.data : [];
     const bookedTimes = new Set(
       appointments
-        .filter((a) => a.doctorId === doctorId && a.appointmentDate === date && a.status !== 'Cancelled')
+        .filter((a) => a.status !== 'Cancelled')
         .map((a) => normalizeTime(a.appointmentTime))
     );
 
@@ -236,25 +194,37 @@ export const appointmentService = {
 
       return {
         time,
-        status
+        status,
       };
     });
   },
 
   async getAvailableDoctors(departmentId: string, date: string): Promise<Doctor[]> {
-    const doctors = storageService.getDoctors();
-    const filtered = (!departmentId || departmentId === 'all')
-      ? doctors
-      : doctors.filter((d) => d.departmentId === departmentId);
+    const [doctors, dateRes] = await Promise.all([
+      doctorService.getByDepartment(departmentId),
+      fetch(`/api/appointments?date=${encodeURIComponent(date)}`)
+        .then((r) => (r.ok ? r.json() : { data: [] }))
+        .catch(() => ({ data: [] })),
+    ]);
 
+    const dateAppointments: Appointment[] = Array.isArray(dateRes?.data) ? dateRes.data : [];
     const availableDocs: Doctor[] = [];
-    for (const doc of filtered) {
-      const slots = await this.getDoctorAvailability(doc.id, date);
-      const hasAvailable = slots.some((s) => s.status === 'Available');
+
+    for (const doc of doctors) {
+      const start = doc.workingHours?.start || '09:00 AM';
+      const end = doc.workingHours?.end || '05:00 PM';
+      const slots = generateDoctorTimeSlots(start, end, 30);
+      const bookedTimes = new Set(
+        dateAppointments
+          .filter((a) => a.doctorId === doc.id && a.status !== 'Cancelled')
+          .map((a) => normalizeTime(a.appointmentTime))
+      );
+      const hasAvailable = slots.some((t) => !bookedTimes.has(normalizeTime(t)));
       if (hasAvailable) {
         availableDocs.push(doc);
       }
     }
+
     return availableDocs;
   },
 
@@ -269,174 +239,114 @@ export const appointmentService = {
     reasonForVisit: string;
     notes?: string;
   }): Promise<Appointment> {
+    // Check slot conflict on server data
     try {
-      const res = await fetch('/api/appointments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          const created = json.data as Appointment;
-          const current = storageService.getAppointments();
-          storageService.setAppointments([created, ...current]);
-          return created;
-        }
-      } else {
-        const errJson = await res.json().catch(() => ({}));
-        if (errJson.error) {
-          throw new Error(errJson.error);
+      const checkRes = await fetch(
+        `/api/appointments?doctorId=${encodeURIComponent(data.doctorId)}&date=${encodeURIComponent(data.appointmentDate)}`
+      );
+      if (checkRes.ok) {
+        const checkJson = await checkRes.json();
+        const existing: Appointment[] = Array.isArray(checkJson.data) ? checkJson.data : [];
+        const normTarget = normalizeTime(data.appointmentTime);
+        const conflict = existing.find(
+          (a) => normalizeTime(a.appointmentTime) === normTarget && a.status !== 'Cancelled'
+        );
+        if (conflict) {
+          throw new Error(
+            `The selected doctor already has an appointment booked at ${data.appointmentTime} on ${data.appointmentDate}. Please select another time slot.`
+          );
         }
       }
     } catch (err: any) {
-      if (err.message && !err.message.includes('fetch')) {
+      if (err?.message?.includes('already has an appointment')) {
         throw err;
       }
-      // Fallback
     }
 
-    const appointments = storageService.getAppointments();
-    const patients = storageService.getPatients();
-    const doctors = storageService.getDoctors();
-    const departments = storageService.getDepartments();
+    const res = await fetch('/api/appointments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
 
-    // Check Conflict
-    const conflict = appointments.find(
-      (a) =>
-        a.doctorId === data.doctorId &&
-        a.appointmentDate === data.appointmentDate &&
-        a.appointmentTime === data.appointmentTime &&
-        a.status !== 'Cancelled'
-    );
-
-    if (conflict) {
-      throw new Error(`The selected doctor already has an appointment booked at ${data.appointmentTime} on ${data.appointmentDate}. Please select another time slot.`);
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || errJson.error || 'Failed to create appointment in database.');
     }
 
-    const patient = patients.find((p) => p.id === data.patientId);
-    if (!patient) throw new Error('Patient not found');
+    const json = await res.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.message || 'Database did not return the created appointment.');
+    }
 
-    const doctor = doctors.find((d) => d.id === data.doctorId);
-    if (!doctor) throw new Error('Doctor not found');
-
-    const department = departments.find((dept) => dept.id === data.departmentId);
-    const nextNumber = appointments.length + 15;
-    const appointmentCode = `APT${10000 + nextNumber}`;
-
-    const newAppointment: Appointment = {
-      id: `apt-${Date.now()}`,
-      appointmentCode,
-      patientId: patient.id,
-      patient: {
-        id: patient.id,
-        patientCode: patient.patientId,
-        name: `${patient.firstName} ${patient.lastName}`,
-        phone: patient.phone,
-        avatar: patient.avatar,
-        gender: patient.gender,
-        dob: patient.dob,
-        email: patient.email,
-        address: patient.address
-      },
-      doctorId: doctor.id,
-      doctor: {
-        id: doctor.id,
-        name: doctor.name,
-        avatar: doctor.avatar,
-        department: doctor.departmentName
-      },
-      departmentId: data.departmentId,
-      departmentName: department?.name || doctor.departmentName,
-      appointmentDate: data.appointmentDate,
-      appointmentTime: data.appointmentTime,
-      durationMinutes: data.durationMinutes,
-      appointmentType: data.appointmentType,
-      status: 'Confirmed',
-      reasonForVisit: data.reasonForVisit,
-      notes: data.notes,
-      createdAt: new Date().toISOString()
-    };
-
-    const updated = [newAppointment, ...appointments];
-    storageService.setAppointments(updated);
-    return newAppointment;
+    return json.data as Appointment;
   },
 
   async updateStatus(id: string, status: AppointmentStatus): Promise<Appointment> {
-    try {
-      const res = await fetch(`/api/appointments/${encodeURIComponent(id)}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.data) {
-          const updated = json.data as Appointment;
-          const current = storageService.getAppointments();
-          const idx = current.findIndex((a) => a.id === id || a.appointmentCode === id);
-          if (idx >= 0) {
-            current[idx] = updated;
-            storageService.setAppointments(current);
-          }
-          return updated;
-        }
-      }
-    } catch {
-      // Fallback
+    const res = await fetch(`/api/appointments/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || 'Failed to update appointment status.');
     }
 
-    const appointments = storageService.getAppointments();
-    const index = appointments.findIndex((a) => a.id === id);
-    if (index === -1) {
-      throw new Error('Appointment not found');
+    const json = await res.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.message || 'Failed to update appointment status.');
     }
 
-    const updatedAppointment = {
-      ...appointments[index],
-      status
-    };
-
-    appointments[index] = updatedAppointment;
-    storageService.setAppointments(appointments);
-    return updatedAppointment;
+    return json.data as Appointment;
   },
 
   async reschedule(id: string, newDate: string, newTime: string): Promise<Appointment> {
-    const appointments = storageService.getAppointments();
-    const index = appointments.findIndex((a) => a.id === id);
-    if (index === -1) {
+    const target = await this.getById(id);
+    if (!target) {
       throw new Error('Appointment not found');
     }
 
-    const target = appointments[index];
-    const conflict = appointments.find(
-      (a) =>
-        a.id !== id &&
-        a.doctorId === target.doctorId &&
-        a.appointmentDate === newDate &&
-        a.appointmentTime === newTime &&
-        a.status !== 'Cancelled'
+    const checkRes = await fetch(
+      `/api/appointments?doctorId=${encodeURIComponent(target.doctorId)}&date=${encodeURIComponent(newDate)}`
     );
-
-    if (conflict) {
-      throw new Error(`Doctor is already booked at ${newTime} on ${newDate}. Please choose another time.`);
+    if (checkRes.ok) {
+      const checkJson = await checkRes.json();
+      const existing: Appointment[] = Array.isArray(checkJson.data) ? checkJson.data : [];
+      const normNewTime = normalizeTime(newTime);
+      const conflict = existing.find(
+        (a) => a.id !== id && normalizeTime(a.appointmentTime) === normNewTime && a.status !== 'Cancelled'
+      );
+      if (conflict) {
+        throw new Error(`Doctor is already booked at ${newTime} on ${newDate}. Please choose another time.`);
+      }
     }
 
-    const updatedAppointment = {
-      ...target,
-      appointmentDate: newDate,
-      appointmentTime: newTime,
-      status: 'Confirmed' as AppointmentStatus
-    };
+    const res = await fetch(`/api/appointments/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appointmentDate: newDate,
+        appointmentTime: newTime,
+        status: 'Confirmed',
+      }),
+    });
 
-    appointments[index] = updatedAppointment;
-    storageService.setAppointments(appointments);
-    return updatedAppointment;
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || 'Failed to reschedule appointment.');
+    }
+
+    const json = await res.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.message || 'Failed to reschedule appointment.');
+    }
+
+    return json.data as Appointment;
   },
 
   async cancelAppointment(id: string): Promise<Appointment> {
     return this.updateStatus(id, 'Cancelled');
-  }
+  },
 };

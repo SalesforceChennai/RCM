@@ -12,9 +12,9 @@ const serverEnvPath = path.resolve(process.cwd(), 'server', '.env');
 const rootEnvPath = path.resolve(process.cwd(), '.env');
 
 if (fs.existsSync(serverEnvPath)) {
-  dotenv.config({ path: serverEnvPath });
+  dotenv.config({ path: serverEnvPath, override: true });
 } else if (fs.existsSync(rootEnvPath)) {
-  dotenv.config({ path: rootEnvPath });
+  dotenv.config({ path: rootEnvPath, override: true });
 } else {
   dotenv.config();
 }

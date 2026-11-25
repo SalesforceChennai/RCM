@@ -6,7 +6,7 @@ import type {
   PatientRegistration,
   InsuranceInfo
 } from '../types';
-import { storageService } from './storageService';
+import { getTodayDateStr } from './statsService';
 
 export interface PriorAuthSearchResult {
   patient: Patient;
@@ -38,7 +38,7 @@ export const PROCEDURE_PRESETS: ProcedurePreset[] = [
     estimatedCost: 1950,
     authorizationRequired: true,
     medicalJustification: 'Chronic intractable migraines with progressive neurological visual symptoms refractory to oral triptans.',
-    supportingDocuments: ['Clinical Neurology Notes', 'Prior Medication History', 'Visual Field Examination']
+    supportingDocuments: ['Clinical Neurology Notes', 'Prior Medication History', 'Visual Field Examination'],
   },
   {
     name: 'Cardiac MRI with Contrast',
@@ -49,7 +49,7 @@ export const PROCEDURE_PRESETS: ProcedurePreset[] = [
     estimatedCost: 1850,
     authorizationRequired: true,
     medicalJustification: 'Evaluation of myocardial viability and ischemic cardiomyopathy following abnormal stress echo.',
-    supportingDocuments: ['Stress Echocardiogram Report', 'Cardiologist Consultation Summary', 'ECG Waveform']
+    supportingDocuments: ['Stress Echocardiogram Report', 'Cardiologist Consultation Summary', 'ECG Waveform'],
   },
   {
     name: 'Lumbar Spine MRI without Contrast',
@@ -60,7 +60,7 @@ export const PROCEDURE_PRESETS: ProcedurePreset[] = [
     estimatedCost: 1400,
     authorizationRequired: true,
     medicalJustification: 'Radiculopathy and lumbar spine compression symptoms persistent despite 6 weeks of conservative care.',
-    supportingDocuments: ['Physical Therapy Progress Note', 'Orthopedic Examination', 'X-Ray Lumbar Spine']
+    supportingDocuments: ['Physical Therapy Progress Note', 'Orthopedic Examination', 'X-Ray Lumbar Spine'],
   },
   {
     name: 'Knee Arthroscopy & Meniscal Repair',
@@ -71,7 +71,7 @@ export const PROCEDURE_PRESETS: ProcedurePreset[] = [
     estimatedCost: 3200,
     authorizationRequired: true,
     medicalJustification: 'Mechanical knee locking and acute medial meniscus tear confirmed on MRI after failed physical rehabilitation.',
-    supportingDocuments: ['MRI Knee Report', 'Surgical Pre-Op Assessment', 'Physical Therapy Records']
+    supportingDocuments: ['MRI Knee Report', 'Surgical Pre-Op Assessment', 'Physical Therapy Records'],
   },
   {
     name: 'CT Chest with IV Contrast',
@@ -82,7 +82,7 @@ export const PROCEDURE_PRESETS: ProcedurePreset[] = [
     estimatedCost: 1100,
     authorizationRequired: true,
     medicalJustification: 'Evaluation of persistent unexplained pleuritic chest discomfort and non-resolving pulmonary infiltrate.',
-    supportingDocuments: ['Chest X-Ray', 'Pulmonology Clinical Summary', 'Lab Panel (CBC, D-Dimer)']
+    supportingDocuments: ['Chest X-Ray', 'Pulmonology Clinical Summary', 'Lab Panel (CBC, D-Dimer)'],
   },
   {
     name: 'Echocardiogram (Transthoracic)',
@@ -93,7 +93,7 @@ export const PROCEDURE_PRESETS: ProcedurePreset[] = [
     estimatedCost: 650,
     authorizationRequired: false,
     medicalJustification: 'Routine outpatient evaluation of systolic ventricular function.',
-    supportingDocuments: ['Cardiology Progress Note']
+    supportingDocuments: ['Cardiology Progress Note'],
   },
   {
     name: 'Routine Specialist Consultation',
@@ -104,26 +104,58 @@ export const PROCEDURE_PRESETS: ProcedurePreset[] = [
     estimatedCost: 180,
     authorizationRequired: false,
     medicalJustification: 'Standard outpatient specialist follow-up for established care management.',
-    supportingDocuments: ['Previous Consultation Summary']
-  }
+    supportingDocuments: ['Previous Consultation Summary'],
+  },
 ];
 
 export const priorAuthService = {
   async getAll(): Promise<PriorAuthorization[]> {
-    return storageService.getPriorAuthorizations();
+    try {
+      const res = await fetch('/api/prior-authorizations');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          return json.data;
+        }
+      }
+    } catch (err) {
+      console.error('[priorAuthService] Failed to fetch prior authorizations:', err);
+    }
+    return [];
   },
 
   async getById(id: string): Promise<PriorAuthorization | null> {
-    return storageService.getPriorAuthById(id);
+    try {
+      const res = await fetch(`/api/prior-authorizations/${encodeURIComponent(id)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) {
+          return json.data;
+        }
+      }
+    } catch (err) {
+      console.error('[priorAuthService] Failed to fetch prior authorization:', err);
+    }
+    return null;
   },
 
   async getByPatientId(patientId: string): Promise<PriorAuthorization[]> {
-    return storageService.getPriorAuthByPatientId(patientId);
+    try {
+      const res = await fetch(`/api/prior-authorizations?patientId=${encodeURIComponent(patientId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          return json.data;
+        }
+      }
+    } catch (err) {
+      console.error('[priorAuthService] Failed to fetch patient prior authorizations:', err);
+    }
+    return [];
   },
 
-  generateNextRequestId(): string {
-    const list = storageService.getPriorAuthorizations();
-    const numbers = list.map((a) => {
+  generateNextRequestId(existingList: PriorAuthorization[] = []): string {
+    const numbers = existingList.map((a) => {
       const match = a.authorizationRequestId.match(/PA-(\d+)/i);
       return match ? parseInt(match[1], 10) : 10000;
     });
@@ -142,11 +174,19 @@ export const priorAuthService = {
 
   async searchPatientsForPriorAuth(query: string): Promise<PriorAuthSearchResult[]> {
     const cleanQuery = query.trim().toLowerCase();
-    const patients = storageService.getPatients();
-    const appointments = storageService.getAppointments();
-    const registrations = storageService.getRegistrations();
-    const insurances = storageService.getInsuranceList();
-    const authorizations = storageService.getPriorAuthorizations();
+    const [patRes, aptRes, regRes, insRes, authRes] = await Promise.all([
+      fetch('/api/patients').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/appointments').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/registrations').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/insurance').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/prior-authorizations').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+    ]);
+
+    const patients: Patient[] = Array.isArray(patRes?.data) ? patRes.data : [];
+    const appointments: Appointment[] = Array.isArray(aptRes?.data) ? aptRes.data : [];
+    const registrations: PatientRegistration[] = Array.isArray(regRes?.data) ? regRes.data : [];
+    const insurances: InsuranceInfo[] = Array.isArray(insRes?.data) ? insRes.data : [];
+    const authorizations: PriorAuthorization[] = Array.isArray(authRes?.data) ? authRes.data : [];
 
     const buildResult = (p: Patient): PriorAuthSearchResult => {
       const pAppointments = appointments
@@ -161,7 +201,7 @@ export const priorAuthService = {
         appointment: pAppointments[0] || null,
         registration: reg,
         insurance: ins,
-        authorizations: patientAuths
+        authorizations: patientAuths,
       };
     };
 
@@ -193,34 +233,43 @@ export const priorAuthService = {
   },
 
   async create(data: Omit<PriorAuthorization, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<PriorAuthorization> {
-    const newId = data.id || `pa-${Date.now()}`;
-    const nowIso = new Date().toISOString();
-    const authRecord: PriorAuthorization = {
-      ...data,
-      id: newId,
-      authorizationRequestId: data.authorizationRequestId || this.generateNextRequestId(),
-      createdAt: nowIso,
-      updatedAt: nowIso
-    };
+    const res = await fetch('/api/prior-authorizations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
 
-    storageService.savePriorAuthorization(authRecord);
-    return authRecord;
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || 'Failed to create prior authorization in database.');
+    }
+
+    const json = await res.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.message || 'Database did not return the created prior authorization.');
+    }
+
+    return json.data as PriorAuthorization;
   },
 
   async update(id: string, data: Partial<PriorAuthorization>): Promise<PriorAuthorization> {
-    const existing = storageService.getPriorAuthById(id);
-    if (!existing) {
-      throw new Error(`Prior Authorization with ID "${id}" not found.`);
+    const res = await fetch(`/api/prior-authorizations/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || `Failed to update prior authorization "${id}".`);
     }
 
-    const updatedRecord: PriorAuthorization = {
-      ...existing,
-      ...data,
-      updatedAt: new Date().toISOString()
-    };
+    const json = await res.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.message || 'Failed to update prior authorization.');
+    }
 
-    storageService.savePriorAuthorization(updatedRecord);
-    return updatedRecord;
+    return json.data as PriorAuthorization;
   },
 
   async updateStatus(
@@ -236,13 +285,12 @@ export const priorAuthService = {
       notes?: string;
     }
   ): Promise<PriorAuthorization> {
-    const existing = storageService.getPriorAuthById(id);
+    const existing = await this.getById(id);
     if (!existing) {
       throw new Error(`Prior Authorization with ID "${id}" not found.`);
     }
 
-    const nowIso = new Date().toISOString();
-    const todayStr = storageService.getCurrentDate();
+    const todayStr = getTodayDateStr();
 
     let authNum = details.authorizationNumber;
     let vFrom = details.validFrom;
@@ -257,7 +305,6 @@ export const priorAuthService = {
       }
       if (!vFrom) vFrom = todayStr;
       if (!vUntil) {
-        // Default 90 days validity
         const d = new Date(todayStr);
         d.setMonth(d.getMonth() + 3);
         vUntil = d.toISOString().split('T')[0];
@@ -280,8 +327,7 @@ export const priorAuthService = {
       sAction = undefined;
     }
 
-    const updated: PriorAuthorization = {
-      ...existing,
+    return this.update(id, {
       status,
       authorizationNumber: authNum,
       validFrom: vFrom,
@@ -290,14 +336,17 @@ export const priorAuthService = {
       denialReason: dReason,
       suggestedAction: sAction,
       notes: details.notes !== undefined ? details.notes : existing.notes,
-      updatedAt: nowIso
-    };
-
-    storageService.savePriorAuthorization(updated);
-    return updated;
+    });
   },
 
   async delete(id: string): Promise<void> {
-    storageService.deletePriorAuthorization(id);
-  }
+    const res = await fetch(`/api/prior-authorizations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || 'Failed to delete prior authorization.');
+    }
+  },
 };

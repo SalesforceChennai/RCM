@@ -31,6 +31,7 @@ import { patientService } from '../services/patientService';
 import { doctorService } from '../services/doctorService';
 import { departmentService } from '../services/departmentService';
 import { appointmentService } from '../services/appointmentService';
+import { getTodayDateStr } from '../services/statsService';
 import { NewPatientModal } from '../components/NewPatientModal';
 
 interface NewAppointmentPageProps {
@@ -77,11 +78,11 @@ export const NewAppointmentPage: React.FC<NewAppointmentPageProps> = ({
   const [address, setAddress] = useState<string>(preselectedPatient?.address || '');
 
   // Appointment Details State
-  const [selectedDeptId, setSelectedDeptId] = useState<string>('dept-cardio');
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string>('doc-smith');
+  const [selectedDeptId, setSelectedDeptId] = useState<string>('');
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string>('');
   const [appointmentType, setAppointmentType] = useState<AppointmentType>('Consultation');
-  const [appointmentDate, setAppointmentDate] = useState<string>('2024-05-31');
-  const [appointmentTime, setAppointmentTime] = useState<string>('10:30 AM');
+  const [appointmentDate, setAppointmentDate] = useState<string>(() => getTodayDateStr());
+  const [appointmentTime, setAppointmentTime] = useState<string>('');
   const [durationMinutes, setDurationMinutes] = useState<number>(30);
   const [reasonForVisit, setReasonForVisit] = useState<string>('');
 
@@ -146,6 +147,9 @@ export const NewAppointmentPage: React.FC<NewAppointmentPageProps> = ({
       ]);
       setDepartments(deptList);
       setDoctors(docList);
+      if (deptList.length > 0 && !selectedDeptId) {
+        setSelectedDeptId(deptList[0].id);
+      }
     } catch {
       onError('Failed to load initial scheduling form data');
     }
@@ -154,7 +158,11 @@ export const NewAppointmentPage: React.FC<NewAppointmentPageProps> = ({
   // Filter doctors with at least one available slot on appointmentDate
   useEffect(() => {
     const updateDoctorsList = async () => {
-      if (!selectedDeptId || !appointmentDate) return;
+      if (!selectedDeptId || !appointmentDate) {
+        setFilteredDoctors([]);
+        setSelectedDoctorId('');
+        return;
+      }
       try {
         const availableDocs = await appointmentService.getAvailableDoctors(selectedDeptId, appointmentDate);
         setFilteredDoctors(availableDocs);
@@ -168,8 +176,8 @@ export const NewAppointmentPage: React.FC<NewAppointmentPageProps> = ({
           setSelectedDoctorId('');
         }
       } catch {
-        const fallback = doctors.filter((d) => d.departmentId === selectedDeptId);
-        setFilteredDoctors(fallback);
+        setFilteredDoctors([]);
+        setSelectedDoctorId('');
       }
     };
 

@@ -22,7 +22,7 @@ import {
 import type { Patient, RegistrationStatus, IdType, Gender, Appointment } from '../types';
 import { patientService } from '../services/patientService';
 import { registrationService, type RegistrationSearchResult } from '../services/registrationService';
-import { storageService } from '../services/storageService';
+import { getTodayDateStr } from '../services/statsService';
 
 interface PatientRegistrationPageProps {
   preselectedPatientId?: string | null;
@@ -69,23 +69,25 @@ export const PatientRegistrationPage: React.FC<PatientRegistrationPageProps> = (
   const [emergencyContactPhone, setEmergencyContactPhone] = useState('');
 
   // Form Fields: Registration Details
-  const [registrationDate, setRegistrationDate] = useState('2024-05-31');
+  const [registrationDate, setRegistrationDate] = useState(() => getTodayDateStr());
   const [registrationStatus, setRegistrationStatus] = useState<RegistrationStatus>('Registered');
   const [notes, setNotes] = useState('');
 
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState('');
 
-  // On mount: if preselectedPatientId passed, load it
+  // On mount: if preselectedPatientId passed, load it from Neon PostgreSQL
   useEffect(() => {
     if (preselectedPatientId) {
       loadPatientById(preselectedPatientId);
     } else {
-      // Default to first patient in storage for convenient instant inspection
-      const patients = storageService.getPatients();
-      if (patients.length > 0) {
-        loadPatientById(patients[0].id);
-      }
+      const loadFirst = async () => {
+        const patients = await patientService.getAll();
+        if (patients.length > 0) {
+          loadPatientById(patients[0].id);
+        }
+      };
+      loadFirst();
     }
   }, [preselectedPatientId]);
 
@@ -119,28 +121,26 @@ export const PatientRegistrationPage: React.FC<PatientRegistrationPageProps> = (
       setEmergencyContactName(existingReg.emergencyContactName || '');
       setEmergencyContactRelationship(existingReg.emergencyContactRelationship || 'Spouse');
       setEmergencyContactPhone(existingReg.emergencyContactPhone || '');
-      setRegistrationDate(existingReg.registrationDate || '2024-05-31');
+      setRegistrationDate(existingReg.registrationDate || getTodayDateStr());
       setRegistrationStatus(existingReg.registrationStatus || 'Registered');
       setNotes(existingReg.notes || '');
     } else {
-      // Defaults
       setIdType('National ID');
       setIdNumber('');
       setEmergencyContactName(pat.emergencyContact || '');
       setEmergencyContactRelationship('Family');
       setEmergencyContactPhone(pat.phone || '');
-      setRegistrationDate('2024-05-31');
+      setRegistrationDate(getTodayDateStr());
       setRegistrationStatus('Registered');
       setNotes('');
     }
 
-    // Appointment info
+    // Appointment info from Neon PostgreSQL
     if (appt) {
       setLatestAppointment(appt);
     } else {
-      const allAppts = storageService.getAppointments();
-      const match = allAppts.find((a) => a.patientId === pat.id);
-      setLatestAppointment(match || null);
+      const patAppts = await patientService.getPatientAppointmentHistory(pat.id);
+      setLatestAppointment(patAppts[0] || null);
     }
 
     setSearchQuery(`${pat.firstName} ${pat.lastName} (${pat.patientId})`);

@@ -12,7 +12,7 @@ import type {
   TreatmentCostItem,
   TreatmentBillingItem
 } from '../types';
-import { storageService } from './storageService';
+import { getTodayDateStr } from './statsService';
 
 export interface InsuranceSearchResult {
   patient: Patient;
@@ -34,14 +34,13 @@ export const insuranceService = {
       if (res.ok) {
         const json = await res.json();
         if (json.success && json.data) {
-          storageService.saveInsurance(json.data);
-          return json.data;
+          return json.data as InsuranceInfo;
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[insuranceService] Failed to fetch insurance:', err);
     }
-    return storageService.getInsuranceByPatientId(patientId);
+    return null;
   },
 
   async checkProviderStatus(
@@ -63,7 +62,6 @@ export const insuranceService = {
         reason = 'This insurance provider has declined the request. Non-contracted provider network or credentialing requirement not met.';
       }
     } else {
-      // Default simulated rules based on provider
       const provLower = insuranceProvider.toLowerCase();
       if (provLower.includes('aetna') || provLower.includes('humana')) {
         status = 'Pending';
@@ -77,44 +75,26 @@ export const insuranceService = {
       }
     }
 
-    const existing = storageService.getInsuranceByPatientId(patientId);
-    const updatedRecord: InsuranceInfo = {
-      ...(existing || {
-        id: `ins-${Date.now()}`,
-        patientId,
-        memberId: '',
-        policyNumber: '',
-        policyHolderName: '',
-        relationshipToPatient: 'Self',
-        groupNumber: 'GRP-STANDARD-01',
-        effectiveDate: '2024-01-01',
-        expiryDate: '2024-12-31',
-        insuranceStatus: 'Active',
-        eligibilityStatus: 'Pending',
-        coverageStatus: 'Consultation, Outpatient Care, and Diagnostic Procedures',
-        copayAmount: 20,
-        deductible: 500,
-        coinsurance: 20,
-        coveredServices: ['Outpatient Consultation', 'Diagnostic Lab Testing', 'Preventative Screenings', 'Specialist Consultations']
-      }),
-      insuranceProvider,
-      providerStatus: status,
-      providerStatusCheckedAt: checkedAt,
-      providerStatusReason: reason,
-      updatedAt: new Date().toISOString()
-    };
-
-    storageService.saveInsurance(updatedRecord);
+    const existing = await this.getInsurance(patientId);
+    if (existing) {
+      await this.saveInsurance({
+        ...existing,
+        insuranceProvider: insuranceProvider || existing.insuranceProvider,
+        providerStatus: status,
+        providerStatusCheckedAt: checkedAt,
+        providerStatusReason: reason,
+      });
+    }
 
     return {
       providerStatus: status,
       providerStatusCheckedAt: checkedAt,
-      providerStatusReason: reason
+      providerStatusReason: reason,
     };
   },
 
   async saveInsurance(data: Omit<InsuranceInfo, 'id' | 'updatedAt'> & { id?: string }): Promise<InsuranceInfo> {
-    const existing = storageService.getInsuranceByPatientId(data.patientId);
+    const existing = await this.getInsurance(data.patientId);
     const insId = data.id || existing?.id || `ins-${Date.now()}`;
     const record: InsuranceInfo = {
       ...data,
@@ -128,42 +108,53 @@ export const insuranceService = {
       additionalCharges: data.additionalCharges !== undefined ? data.additionalCharges : existing?.additionalCharges,
       treatmentBreakdown: data.treatmentBreakdown || existing?.treatmentBreakdown,
       billingBreakdown: data.billingBreakdown || existing?.billingBreakdown,
-      updatedAt: new Date().toISOString()
+      requestId: data.requestId || existing?.requestId,
+      timeline: data.timeline || existing?.timeline,
+      messages: data.messages || existing?.messages,
+      updatedAt: new Date().toISOString(),
     };
-    try {
-      await fetch('/api/insurance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(record)
-      });
-    } catch {
-      // Fallback
+
+    const res = await fetch('/api/insurance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || 'Failed to save insurance record in database.');
     }
 
-    storageService.saveInsurance(record);
-    return record;
+    const json = await res.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.message || 'Failed to save insurance record.');
+    }
+
+    return json.data as InsuranceInfo;
   },
 
   async verifyInsurance(
     patientId: string,
     insuranceData: Partial<InsuranceInfo>
   ): Promise<{ isVerified: boolean; verificationResult: InsuranceVerificationResult; insurance: InsuranceInfo }> {
-    const currentDateStr = storageService.getCurrentDate();
-    const existing = storageService.getInsuranceByPatientId(patientId);
+    const currentDateStr = getTodayDateStr();
+    const existing = await this.getInsurance(patientId);
 
-    const provider = insuranceData.insuranceProvider || existing?.insuranceProvider || 'Blue Cross Blue Shield';
+    const provider = insuranceData.insuranceProvider || existing?.insuranceProvider || '';
     const memberId = insuranceData.memberId || existing?.memberId || '';
     const policyNumber = insuranceData.policyNumber || existing?.policyNumber || '';
-    const expiryDate = insuranceData.expiryDate || existing?.expiryDate || '2024-12-31';
+    const expiryDate = insuranceData.expiryDate || existing?.expiryDate || '';
     const policyHolder = insuranceData.policyHolderName || existing?.policyHolderName || 'Self';
     const relation = insuranceData.relationshipToPatient || existing?.relationshipToPatient || 'Self';
-    const groupNum = insuranceData.groupNumber || existing?.groupNumber || 'GRP-STANDARD-01';
+    const groupNum = insuranceData.groupNumber || existing?.groupNumber || '';
 
-    // Verification Logic Checks
     let isEligible = true;
     let failureReason = '';
 
-    if (!memberId.trim() || memberId.trim().length < 4) {
+    if (!provider.trim()) {
+      isEligible = false;
+      failureReason = 'Insurance provider name is required for verification.';
+    } else if (!memberId.trim() || memberId.trim().length < 4) {
       isEligible = false;
       failureReason = 'Invalid Member ID format. Payer requires at least 4 alphanumeric characters.';
     } else if (insuranceData.insuranceStatus === 'Inactive') {
@@ -178,30 +169,32 @@ export const insuranceService = {
       ? {
           isVerified: true,
           verifiedAt: new Date().toISOString(),
-          message: `Active coverage confirmed with ${provider}. Real-time EDI 270/271 transaction successful.`
+          message: `Active coverage confirmed with ${provider}. Real-time EDI 270/271 transaction successful.`,
         }
       : {
           isVerified: false,
           verifiedAt: new Date().toISOString(),
-          message: `Insurance verification rejected by ${provider}.`,
-          failureReason
+          message: `Insurance verification rejected by ${provider || 'Payer'}.`,
+          failureReason,
         };
 
-    const copay = isEligible ? (insuranceData.copayAmount !== undefined ? insuranceData.copayAmount : 20) : 0;
-    const deductible = isEligible ? (insuranceData.deductible !== undefined ? insuranceData.deductible : 500) : 0;
-    const coinsurance = isEligible ? (insuranceData.coinsurance !== undefined ? insuranceData.coinsurance : 20) : 0;
+    const copay = isEligible ? (insuranceData.copayAmount !== undefined ? insuranceData.copayAmount : (existing?.copayAmount ?? 0)) : 0;
+    const deductible = isEligible ? (insuranceData.deductible !== undefined ? insuranceData.deductible : (existing?.deductible ?? 0)) : 0;
+    const coinsurance = isEligible ? (insuranceData.coinsurance !== undefined ? insuranceData.coinsurance : (existing?.coinsurance ?? 0)) : 0;
     const coverage = isEligible
-      ? (insuranceData.coverageStatus || 'Consultation, Outpatient Care, and Basic Diagnostic Procedures')
+      ? (insuranceData.coverageStatus || existing?.coverageStatus || 'Consultation, Outpatient Care, and Basic Diagnostic Procedures')
       : 'No Active Coverage';
 
     const coveredServices = isEligible
       ? (insuranceData.coveredServices && insuranceData.coveredServices.length > 0
           ? insuranceData.coveredServices
-          : ['Outpatient Visits', 'Diagnostic Lab Testing', 'Preventative Screenings', 'Specialist Consultations'])
+          : (existing?.coveredServices && existing.coveredServices.length > 0
+              ? existing.coveredServices
+              : ['Outpatient Visits', 'Diagnostic Lab Testing', 'Preventative Screenings', 'Specialist Consultations']))
       : [];
 
-    const insuranceRecord: InsuranceInfo = {
-      id: existing?.id || `ins-${Date.now()}`,
+    const savedInsurance = await this.saveInsurance({
+      id: existing?.id,
       patientId,
       appointmentId: insuranceData.appointmentId || existing?.appointmentId,
       insuranceProvider: provider,
@@ -210,7 +203,7 @@ export const insuranceService = {
       policyHolderName: policyHolder,
       relationshipToPatient: relation,
       groupNumber: groupNum,
-      effectiveDate: insuranceData.effectiveDate || existing?.effectiveDate || '2024-01-01',
+      effectiveDate: insuranceData.effectiveDate || existing?.effectiveDate || '',
       expiryDate,
       insuranceStatus: isEligible ? 'Active' : (insuranceData.insuranceStatus === 'Expired' ? 'Expired' : 'Inactive'),
       eligibilityStatus: isEligible ? 'Eligible' : 'Not Eligible',
@@ -229,26 +222,31 @@ export const insuranceService = {
       providerStatus: insuranceData.providerStatus || existing?.providerStatus || 'Accepted',
       providerStatusCheckedAt: insuranceData.providerStatusCheckedAt || existing?.providerStatusCheckedAt || new Date().toISOString(),
       providerStatusReason: insuranceData.providerStatusReason || existing?.providerStatusReason,
-      updatedAt: new Date().toISOString()
-    };
-
-    storageService.saveInsurance(insuranceRecord);
+    });
 
     return {
       isVerified: isEligible,
       verificationResult,
-      insurance: insuranceRecord
+      insurance: savedInsurance,
     };
   },
 
   async searchPatientsForInsurance(query: string): Promise<InsuranceSearchResult[]> {
     const q = query.trim().toLowerCase();
-    const patients = storageService.getPatients();
-    const appointments = storageService.getAppointments();
-    const registrations = storageService.getRegistrations();
-    const insurances: InsuranceInfo[] = storageService.getInsuranceList();
+    const [patRes, aptRes, regRes, insRes] = await Promise.all([
+      fetch('/api/patients').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/appointments').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/registrations').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/insurance').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+    ]);
+
+    const patients: Patient[] = Array.isArray(patRes?.data) ? patRes.data : [];
+    const appointments: Appointment[] = Array.isArray(aptRes?.data) ? aptRes.data : [];
+    const registrations: PatientRegistration[] = Array.isArray(regRes?.data) ? regRes.data : [];
+    const insurances: InsuranceInfo[] = Array.isArray(insRes?.data) ? insRes.data : [];
 
     const filteredPatients = patients.filter((p) => {
+      if (!q) return true;
       const matchName = `${p.firstName} ${p.lastName}`.toLowerCase().includes(q);
       const matchId = p.patientId.toLowerCase().includes(q);
       const matchAppt = appointments.some(
@@ -272,13 +270,39 @@ export const insuranceService = {
         patient,
         appointment: patientAppointments[0] || null,
         registration: reg,
-        insurance: ins
+        insurance: ins,
       };
     });
   },
 
   async getInsuranceCommunication(patientId: string): Promise<InsuranceCommunicationRequest | null> {
-    return storageService.getInsuranceCommunicationByPatientId(patientId);
+    const ins = await this.getInsurance(patientId);
+    if (!ins || (!ins.requestId && (!ins.timeline || ins.timeline.length === 0) && (!ins.messages || ins.messages.length === 0))) {
+      return null;
+    }
+
+    return {
+      id: ins.requestId || `REQ-${ins.id}`,
+      patientId: ins.patientId,
+      insuranceProvider: ins.insuranceProvider,
+      memberId: ins.memberId,
+      policyNumber: ins.policyNumber,
+      treatmentAmount: ins.treatmentAmount || 0,
+      requestedAmount: ins.requestedAmount || 0,
+      patientResponsibilityAmount: ins.patientResponsibilityAmount,
+      additionalCharges: ins.additionalCharges,
+      treatmentBreakdown: ins.treatmentBreakdown,
+      billingBreakdown: ins.billingBreakdown,
+      status: ins.eligibilityStatus === 'Eligible'
+        ? 'Approved'
+        : ins.eligibilityStatus === 'Not Eligible'
+        ? 'Denied'
+        : 'Under Review',
+      submittedAt: ins.updatedAt,
+      timeline: ins.timeline || [],
+      messages: ins.messages || [],
+      updatedAt: ins.updatedAt,
+    };
   },
 
   async sendInsuranceRequest(payload: {
@@ -294,8 +318,8 @@ export const insuranceService = {
     billingBreakdown?: TreatmentBillingItem[];
     initialMessage?: string;
   }): Promise<InsuranceCommunicationRequest> {
-    const existing = storageService.getInsuranceCommunicationByPatientId(payload.patientId);
-    const reqId = existing?.id || `REQ-${payload.insuranceProvider.split(' ').map(w => w[0]).join('').toUpperCase()}-${Math.floor(10000 + Math.random() * 90000)}`;
+    const existing = await this.getInsurance(payload.patientId);
+    const reqId = existing?.requestId || `REQ-${payload.insuranceProvider.split(' ').map((w) => w[0]).join('').toUpperCase() || 'INS'}-${Math.floor(10000 + Math.random() * 90000)}`;
     const now = new Date().toISOString();
 
     const initialTimeline: RequestTimelineStep[] = [
@@ -305,7 +329,7 @@ export const insuranceService = {
         description: `Initial insurance claim & pre-verification request submitted to ${payload.insuranceProvider} for $${payload.requestedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}.`,
         timestamp: now,
         status: 'completed',
-        badgeText: 'Submitted'
+        badgeText: 'Submitted',
       },
       {
         stepKey: 'under_review',
@@ -313,7 +337,7 @@ export const insuranceService = {
         description: `${payload.insuranceProvider} electronic EDI clearinghouse accepted the request and initiated clinical coverage review.`,
         timestamp: new Date(Date.now() + 60000).toISOString(),
         status: 'completed',
-        badgeText: 'Payer Reviewing'
+        badgeText: 'Payer Reviewing',
       },
       {
         stepKey: 'info_requested',
@@ -321,32 +345,32 @@ export const insuranceService = {
         description: `Insurance claims examiner requested supporting documents: Patient Insurance Card and Treatment Estimate.`,
         timestamp: new Date(Date.now() + 120000).toISOString(),
         status: 'active',
-        badgeText: 'Action Required'
+        badgeText: 'Action Required',
       },
       {
         stepKey: 'docs_submitted',
         title: 'Documents / Details Submitted',
         description: 'Hospital uploads and securely transmits requested clinical and insurance documents.',
-        status: 'upcoming'
+        status: 'upcoming',
       },
       {
         stepKey: 'decision_pending',
         title: 'Decision Pending',
         description: 'Insurance medical review board evaluating submitted documents against policy limits.',
-        status: 'upcoming'
+        status: 'upcoming',
       },
       {
         stepKey: 'decision_final',
         title: 'Approval / Denial',
         description: 'Final claim decision and electronic authorization issuance.',
-        status: 'upcoming'
-      }
+        status: 'upcoming',
+      },
     ];
 
     const billingItemsText = payload.billingBreakdown && payload.billingBreakdown.length > 0
-      ? `\nTreatment & Billing Breakdown:\n${payload.billingBreakdown.map(b => `• ${b.serviceDescription} [${b.procedureCode} | ${b.diagnosisCode}]: $${b.amount.toLocaleString()}`).join('\n')}`
+      ? `\nTreatment & Billing Breakdown:\n${payload.billingBreakdown.map((b) => `• ${b.serviceDescription} [${b.procedureCode} | ${b.diagnosisCode}]: $${b.amount.toLocaleString()}`).join('\n')}`
       : (payload.treatmentBreakdown && payload.treatmentBreakdown.length > 0
-          ? `\nItemized Breakdown:\n${payload.treatmentBreakdown.map(b => `• ${b.serviceName} (${b.category}): ${b.quantity} × $${b.unitCost} = $${b.totalCost.toLocaleString()}`).join('\n')}`
+          ? `\nItemized Breakdown:\n${payload.treatmentBreakdown.map((b) => `• ${b.serviceName} (${b.category}): ${b.quantity} × $${b.unitCost} = $${b.totalCost.toLocaleString()}`).join('\n')}`
           : '');
 
     const patientResp = payload.patientResponsibilityAmount !== undefined
@@ -359,22 +383,22 @@ export const insuranceService = {
         sender: 'Hospital Billing Desk',
         senderRole: 'Hospital / Admin',
         text: payload.initialMessage || `Submitted insurance pre-verification and coverage request for ${payload.insuranceProvider}.\n• Total Estimated Treatment Cost: $${payload.treatmentAmount.toLocaleString()}\n• Requested Insurance Coverage: $${payload.requestedAmount.toLocaleString()}\n• Estimated Patient Responsibility: $${patientResp.toLocaleString()}${billingItemsText}`,
-        timestamp: now
+        timestamp: now,
       },
       {
         id: `msg-${Date.now()}-2`,
         sender: `${payload.insuranceProvider} Claims Desk`,
         senderRole: 'Insurance Provider',
         text: `Your request #${reqId} has been received and is under clinical benefits review.`,
-        timestamp: new Date(Date.now() + 60000).toISOString()
+        timestamp: new Date(Date.now() + 60000).toISOString(),
       },
       {
         id: `msg-${Date.now()}-3`,
         sender: `${payload.insuranceProvider} Claims Desk`,
         senderRole: 'Insurance Provider',
         text: `Please upload the patient's insurance card (front & back) and itemized treatment estimate breakdown so we can proceed with eligibility clearance.`,
-        timestamp: new Date(Date.now() + 120000).toISOString()
-      }
+        timestamp: new Date(Date.now() + 120000).toISOString(),
+      },
     ];
 
     const newRequest: InsuranceCommunicationRequest = {
@@ -393,10 +417,39 @@ export const insuranceService = {
       submittedAt: now,
       timeline: initialTimeline,
       messages: initialMessages,
-      updatedAt: now
+      updatedAt: now,
     };
 
-    storageService.saveInsuranceCommunication(newRequest);
+    await this.saveInsurance({
+      ...(existing || {
+        patientId: payload.patientId,
+        insuranceProvider: payload.insuranceProvider,
+        memberId: payload.memberId,
+        policyNumber: payload.policyNumber,
+        policyHolderName: '',
+        relationshipToPatient: 'Self',
+        groupNumber: '',
+        effectiveDate: '',
+        expiryDate: '',
+        insuranceStatus: 'Pending Verification',
+        eligibilityStatus: 'Pending',
+        coverageStatus: '',
+        copayAmount: 0,
+        deductible: 0,
+        coinsurance: 0,
+        coveredServices: [],
+      }),
+      requestId: reqId,
+      treatmentAmount: payload.treatmentAmount,
+      requestedAmount: payload.requestedAmount,
+      patientResponsibilityAmount: patientResp,
+      additionalCharges: payload.additionalCharges || 0,
+      treatmentBreakdown: payload.treatmentBreakdown || [],
+      billingBreakdown: payload.billingBreakdown || [],
+      timeline: initialTimeline,
+      messages: initialMessages,
+    });
+
     return newRequest;
   },
 
@@ -409,70 +462,68 @@ export const insuranceService = {
       attachments?: ChatAttachment[];
     }
   ): Promise<{ request: InsuranceCommunicationRequest; autoResponseTriggered?: boolean }> {
-    let req = storageService.getInsuranceCommunicationByPatientId(patientId);
+    const ins = await this.getInsurance(patientId);
+    const existingComm = await this.getInsuranceCommunication(patientId);
     const now = new Date().toISOString();
 
-    if (!req) {
-      const ins = storageService.getInsuranceByPatientId(patientId);
-      req = {
-        id: `REQ-INS-${Math.floor(10000 + Math.random() * 90000)}`,
-        patientId,
-        insuranceProvider: ins?.insuranceProvider || 'Blue Cross Blue Shield',
-        memberId: ins?.memberId || 'BCBS-10029',
-        policyNumber: ins?.policyNumber || 'POL-9921',
-        treatmentAmount: 3500,
-        requestedAmount: 3000,
-        status: 'Under Review',
-        submittedAt: now,
-        timeline: [
-          {
-            stepKey: 'submitted',
-            title: 'Request Submitted',
-            description: 'Request submitted to payer.',
-            timestamp: now,
-            status: 'completed',
-            badgeText: 'Submitted'
-          },
-          {
-            stepKey: 'under_review',
-            title: 'Under Review',
-            description: 'Under review by payer.',
-            timestamp: now,
-            status: 'active',
-            badgeText: 'In Review'
-          },
-          {
-            stepKey: 'info_requested',
-            title: 'Additional Information Requested',
-            description: 'Payer may request additional documents.',
-            status: 'upcoming'
-          },
-          {
-            stepKey: 'docs_submitted',
-            title: 'Documents / Details Submitted',
-            description: 'Hospital uploads and sends requested information.',
-            status: 'upcoming'
-          },
-          {
-            stepKey: 'decision_pending',
-            title: 'Decision Pending',
-            description: 'Payer reviewing submitted documents.',
-            status: 'upcoming'
-          },
-          {
-            stepKey: 'decision_final',
-            title: 'Approval / Denial',
-            description: 'Final status of the insurance request.',
-            status: 'upcoming'
-          }
-        ],
-        messages: [],
-        updatedAt: now
-      };
-    }
+    let req: InsuranceCommunicationRequest = existingComm || {
+      id: ins?.requestId || `REQ-INS-${Math.floor(10000 + Math.random() * 90000)}`,
+      patientId,
+      insuranceProvider: ins?.insuranceProvider || '',
+      memberId: ins?.memberId || '',
+      policyNumber: ins?.policyNumber || '',
+      treatmentAmount: ins?.treatmentAmount || 0,
+      requestedAmount: ins?.requestedAmount || 0,
+      status: 'Under Review',
+      submittedAt: now,
+      timeline: [
+        {
+          stepKey: 'submitted',
+          title: 'Request Submitted',
+          description: 'Request submitted to payer.',
+          timestamp: now,
+          status: 'completed',
+          badgeText: 'Submitted',
+        },
+        {
+          stepKey: 'under_review',
+          title: 'Under Review',
+          description: 'Under review by payer.',
+          timestamp: now,
+          status: 'active',
+          badgeText: 'In Review',
+        },
+        {
+          stepKey: 'info_requested',
+          title: 'Additional Information Requested',
+          description: 'Payer may request additional documents.',
+          status: 'upcoming',
+        },
+        {
+          stepKey: 'docs_submitted',
+          title: 'Documents / Details Submitted',
+          description: 'Hospital uploads and sends requested information.',
+          status: 'upcoming',
+        },
+        {
+          stepKey: 'decision_pending',
+          title: 'Decision Pending',
+          description: 'Payer reviewing submitted documents.',
+          status: 'upcoming',
+        },
+        {
+          stepKey: 'decision_final',
+          title: 'Approval / Denial',
+          description: 'Final status of the insurance request.',
+          status: 'upcoming',
+        },
+      ],
+      messages: [],
+      updatedAt: now,
+    };
 
     const role = messagePayload.senderRole || 'Hospital / Admin';
-    const sender = messagePayload.senderName || (role === 'Hospital / Admin' ? 'Hospital Billing Desk' : `${req.insuranceProvider} Claims Specialist`);
+    const sender = messagePayload.senderName || (role === 'Hospital / Admin' ? 'Hospital Billing Desk' : `${req.insuranceProvider || 'Insurance'} Claims Specialist`);
 
     const newMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
@@ -480,17 +531,24 @@ export const insuranceService = {
       senderRole: role,
       text: messagePayload.text,
       timestamp: now,
-      attachments: messagePayload.attachments && messagePayload.attachments.length > 0 ? messagePayload.attachments : undefined
+      attachments: messagePayload.attachments && messagePayload.attachments.length > 0 ? messagePayload.attachments : undefined,
     };
 
-    req.messages.push(newMsg);
-    req.updatedAt = now;
+    req = {
+      ...req,
+      messages: [...req.messages, newMsg],
+      updatedAt: now,
+    };
 
-    // If hospital uploaded attachments/sent details, advance timeline to 'Documents Submitted' -> 'Decision Pending'
-    const hasAttachments = messagePayload.attachments && messagePayload.attachments.length > 0;
-    if (role === 'Hospital / Admin' && (hasAttachments || messagePayload.text.toLowerCase().includes('document') || messagePayload.text.toLowerCase().includes('attached') || messagePayload.text.toLowerCase().includes('upload'))) {
+    const hasAttachments = Boolean(messagePayload.attachments && messagePayload.attachments.length > 0);
+    if (
+      role === 'Hospital / Admin' &&
+      (hasAttachments ||
+        messagePayload.text.toLowerCase().includes('document') ||
+        messagePayload.text.toLowerCase().includes('attached') ||
+        messagePayload.text.toLowerCase().includes('upload'))
+    ) {
       req.status = 'Documents Submitted';
-
       req.timeline = req.timeline.map((step) => {
         if (step.stepKey === 'submitted' || step.stepKey === 'under_review' || step.stepKey === 'info_requested') {
           return { ...step, status: 'completed' as const };
@@ -501,8 +559,8 @@ export const insuranceService = {
             status: 'completed' as const,
             timestamp: now,
             description: hasAttachments
-              ? `Hospital uploaded and transmitted ${messagePayload.attachments!.length} document(s): ${messagePayload.attachments!.map(a => a.name).join(', ')}.`
-              : 'Hospital uploaded and confirmed required insurance documents.'
+              ? `Hospital uploaded and transmitted ${messagePayload.attachments!.length} document(s): ${messagePayload.attachments!.map((a) => a.name).join(', ')}.`
+              : 'Hospital uploaded and confirmed required insurance documents.',
           };
         }
         if (step.stepKey === 'decision_pending') {
@@ -510,14 +568,22 @@ export const insuranceService = {
             ...step,
             status: 'active' as const,
             timestamp: now,
-            description: `${req!.insuranceProvider} medical review committee is evaluating submitted documents for final eligibility determination.`
+            description: `${req.insuranceProvider || 'Payer'} medical review committee is evaluating submitted documents for final eligibility determination.`,
           };
         }
         return step;
       });
     }
 
-    storageService.saveInsuranceCommunication(req);
+    if (ins) {
+      await this.saveInsurance({
+        ...ins,
+        requestId: req.id,
+        timeline: req.timeline,
+        messages: req.messages,
+      });
+    }
+
     return { request: req, autoResponseTriggered: hasAttachments };
   },
 
@@ -526,15 +592,15 @@ export const insuranceService = {
     decision: 'Approved' | 'Denied',
     customNotes?: string
   ): Promise<InsuranceCommunicationRequest> {
-    let req = storageService.getInsuranceCommunicationByPatientId(patientId);
+    const ins = await this.getInsurance(patientId);
+    const req = await this.getInsuranceCommunication(patientId);
     const now = new Date().toISOString();
     if (!req) throw new Error('No active communication request found for this patient.');
 
-    req.status = decision;
     const isApproved = decision === 'Approved';
-    const authNum = `AUTH-${req.insuranceProvider.split(' ').map(w => w[0]).join('').toUpperCase()}-${Math.floor(100000 + Math.random() * 900000)}`;
+    const authNum = `AUTH-${(req.insuranceProvider || 'INS').split(' ').map((w) => w[0]).join('').toUpperCase()}-${Math.floor(100000 + Math.random() * 900000)}`;
 
-    req.timeline = req.timeline.map((step) => {
+    const updatedTimeline = req.timeline.map((step) => {
       if (step.stepKey !== 'decision_final') {
         return { ...step, status: 'completed' as const };
       }
@@ -545,8 +611,8 @@ export const insuranceService = {
         title: isApproved ? 'Approved' : 'Denied',
         badgeText: isApproved ? 'Approved' : 'Denied',
         description: isApproved
-          ? (customNotes || `Insurance request APPROVED for $${req!.requestedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}. Electronic authorization code: ${authNum}.`)
-          : (customNotes || `Insurance request DECLINED. Reason: Benefit coverage limitation or out-of-network service code.`)
+          ? (customNotes || `Insurance request APPROVED for $${req.requestedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}. Electronic authorization code: ${authNum}.`)
+          : (customNotes || `Insurance request DECLINED. Reason: Benefit coverage limitation or out-of-network service code.`),
       };
     });
 
@@ -557,12 +623,27 @@ export const insuranceService = {
       text: isApproved
         ? `Decision Notice: Your insurance request #${req.id} has been APPROVED for $${req.requestedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}. Authorization Code: ${authNum}. All verified covered services are authorized.`
         : `Decision Notice: Your insurance request #${req.id} has been DECLINED by payer review board. Reason: Service code not covered under standard outpatient benefit limits.`,
-      timestamp: now
+      timestamp: now,
     };
 
-    req.messages.push(responseMsg);
-    req.updatedAt = now;
-    storageService.saveInsuranceCommunication(req);
-    return req;
-  }
+    const updatedReq: InsuranceCommunicationRequest = {
+      ...req,
+      status: decision,
+      timeline: updatedTimeline,
+      messages: [...req.messages, responseMsg],
+      updatedAt: now,
+    };
+
+    if (ins) {
+      await this.saveInsurance({
+        ...ins,
+        eligibilityStatus: isApproved ? 'Eligible' : 'Not Eligible',
+        providerStatus: isApproved ? 'Accepted' : 'Declined',
+        timeline: updatedReq.timeline,
+        messages: updatedReq.messages,
+      });
+    }
+
+    return updatedReq;
+  },
 };

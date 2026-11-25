@@ -7,19 +7,6 @@ import type {
   PaymentStatus
 } from '../types/paymentPrediction';
 import { RandomForestClassifier } from './randomForestClassifier';
-import { INITIAL_CLAIMS } from '../data/mockData';
-
-const STORAGE_KEY_CUSTOM_CLAIMS = 'medicare_rcm_claims_registry_v3';
-
-// Purge any legacy synthetic claims from localStorage
-if (typeof window !== 'undefined' && window.localStorage) {
-  try {
-    window.localStorage.removeItem('medicare_rcm_custom_claims_v1');
-    window.localStorage.removeItem('medicare_rcm_claims_registry_v2');
-  } catch {
-    // Ignore error
-  }
-}
 
 export interface ClaimsFilterOptions {
   searchQuery?: string;
@@ -42,68 +29,55 @@ class PaymentPredictionService {
   private model: RandomForestClassifier;
   private claims: ClaimRecord[] = [];
   private metrics: ModelMetrics | null = null;
-  private isInitialized = false;
 
   constructor() {
     this.model = new RandomForestClassifier(28, 6, 6);
   }
 
   /**
-   * Initializes dataset and trains the Random Forest model on real available claims
+   * Fetches real claims exclusively from /api/claims (Neon PostgreSQL) and trains Random Forest if >= 5 records exist.
    */
   public async initialize(): Promise<{ metrics: ModelMetrics | null; stats: PaymentPredictionStats }> {
-    if (this.isInitialized) {
-      return {
-        metrics: this.metrics,
-        stats: this.getSummaryStats()
-      };
-    }
-
-    const baseClaims: ClaimRecord[] = [];
-
-    // Load any user-created or persisted claims from localStorage
     try {
-      const storedRaw = localStorage.getItem(STORAGE_KEY_CUSTOM_CLAIMS);
-      if (storedRaw) {
-        const customClaims: ClaimRecord[] = JSON.parse(storedRaw);
-        if (Array.isArray(customClaims) && customClaims.length > 0) {
-          baseClaims.push(...customClaims);
+      const res = await fetch('/api/claims?limit=500');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          this.claims = (json.data as ClaimRecord[]).map((c) => {
+            if (!c.predictedStatus || c.paymentProbability === undefined || !c.riskLevel) {
+              const pred = this.model.predictClaim(c);
+              return {
+                ...c,
+                predictedStatus: c.predictedStatus || pred.prediction,
+                paymentProbability: c.paymentProbability ?? pred.probability,
+                riskLevel: c.riskLevel || pred.riskLevel,
+              };
+            }
+            return c;
+          });
+        } else {
+          this.claims = [];
         }
+      } else {
+        this.claims = [];
       }
-    } catch (e) {
-      console.warn('Could not read stored claims', e);
+    } catch (err) {
+      console.error('[paymentPredictionService] Failed to fetch claims from API:', err);
+      this.claims = [];
     }
 
-    // Fall back to INITIAL_CLAIMS if storage is empty
-    if (baseClaims.length === 0) {
-      baseClaims.push(...INITIAL_CLAIMS);
-      try {
-        localStorage.setItem(STORAGE_KEY_CUSTOM_CLAIMS, JSON.stringify(INITIAL_CLAIMS));
-      } catch (e) {
-        console.warn('Could not persist initial claims', e);
-      }
-    }
-
-    this.claims = baseClaims;
-
-    // Only compute model metrics if real claim records exist
     if (this.claims.length >= 5) {
       this.metrics = this.model.train(this.claims);
     } else {
       this.metrics = null;
     }
 
-    this.isInitialized = true;
-
     return {
       metrics: this.metrics,
-      stats: this.getSummaryStats()
+      stats: this.getSummaryStats(),
     };
   }
 
-  /**
-   * Retrains model from scratch on available real claim records
-   */
   public retrainModel(): { metrics: ModelMetrics | null; stats: PaymentPredictionStats } {
     if (this.claims.length >= 5) {
       this.metrics = this.model.train(this.claims);
@@ -113,13 +87,10 @@ class PaymentPredictionService {
 
     return {
       metrics: this.metrics,
-      stats: this.getSummaryStats()
+      stats: this.getSummaryStats(),
     };
   }
 
-  /**
-   * Computes top-level dashboard summary cards
-   */
   public getSummaryStats(): PaymentPredictionStats {
     const total = this.claims.length;
     if (total === 0) {
@@ -136,7 +107,7 @@ class PaymentPredictionService {
         lowRiskClaimsCount: 0,
         totalAmountAnalyzed: 0,
         predictedPaidAmount: 0,
-        predictedAtRiskAmount: 0
+        predictedAtRiskAmount: 0,
       };
     }
 
@@ -151,7 +122,7 @@ class PaymentPredictionService {
     let atRiskAmount = 0;
 
     for (const claim of this.claims) {
-      const prob = claim.paymentProbability ?? 0.8;
+      const prob = claim.paymentProbability ?? 0;
       sumProbability += prob;
       totalAmount += claim.claimAmount;
 
@@ -185,13 +156,10 @@ class PaymentPredictionService {
       lowRiskClaimsCount: lowRiskCount,
       totalAmountAnalyzed: totalAmount,
       predictedPaidAmount: paidAmount,
-      predictedAtRiskAmount: atRiskAmount
+      predictedAtRiskAmount: atRiskAmount,
     };
   }
 
-  /**
-   * Retrieves paginated, filtered claims
-   */
   public getClaims(options: ClaimsFilterOptions = {}): PaginatedClaimsResult {
     const {
       searchQuery = '',
@@ -199,12 +167,11 @@ class PaymentPredictionService {
       riskLevel = 'All',
       prediction = 'All',
       page = 1,
-      limit = 12
+      limit = 12,
     } = options;
 
     let filtered = [...this.claims];
 
-    // Search Query Filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       filtered = filtered.filter(
@@ -220,17 +187,14 @@ class PaymentPredictionService {
       );
     }
 
-    // Insurance Provider Filter
     if (provider && provider !== 'All') {
       filtered = filtered.filter((c) => c.insuranceProvider.toLowerCase().includes(provider.toLowerCase()));
     }
 
-    // Risk Level Filter
     if (riskLevel && riskLevel !== 'All') {
       filtered = filtered.filter((c) => c.riskLevel === riskLevel);
     }
 
-    // Prediction Filter
     if (prediction && prediction !== 'All') {
       filtered = filtered.filter((c) => c.predictedStatus === prediction);
     }
@@ -246,72 +210,88 @@ class PaymentPredictionService {
       total,
       page: safePage,
       totalPages,
-      limit
+      limit,
     };
   }
 
-  /**
-   * Predicts payment for a new claim using the Random Forest model
-   */
   public predictNewClaim(claimInput: Partial<ClaimRecord>): ClaimPredictionResult {
-    // Build a standardized claim record with safe defaults
     const fullRecord: ClaimRecord = {
       claimId: claimInput.claimId || `CLM-${Math.floor(2000 + Math.random() * 8000)}`,
       patientId: claimInput.patientId || '',
       patientName: claimInput.patientName || '',
-      patientAge: Number(claimInput.patientAge) || 45,
-      gender: claimInput.gender || 'Female',
-      department: claimInput.department || 'General Medicine',
-      doctor: claimInput.doctor || 'Dr. Robert Davis',
-      insuranceProvider: claimInput.insuranceProvider || 'Medicare',
-      claimAmount: Number(claimInput.claimAmount) || 450,
-      procedureCode: claimInput.procedureCode || 'CPT 99214',
-      procedureDescription: claimInput.procedureDescription || 'Office Outpatient Visit',
-      diagnosisCode: claimInput.diagnosisCode || 'ICD-10 E11.9',
-      diagnosisDescription: claimInput.diagnosisDescription || 'Type 2 diabetes mellitus',
+      patientAge: Number(claimInput.patientAge) || 0,
+      gender: claimInput.gender || 'Other',
+      department: claimInput.department || '',
+      doctor: claimInput.doctor || '',
+      insuranceProvider: claimInput.insuranceProvider || '',
+      claimAmount: Number(claimInput.claimAmount) || 0,
+      procedureCode: claimInput.procedureCode || '',
+      procedureDescription: claimInput.procedureDescription || '',
+      diagnosisCode: claimInput.diagnosisCode || '',
+      diagnosisDescription: claimInput.diagnosisDescription || '',
       numberOfProcedures: Number(claimInput.numberOfProcedures) || 1,
       previousClaimsCount: Number(claimInput.previousClaimsCount) || 0,
       previousPaidClaims: Number(claimInput.previousPaidClaims) || 0,
       previousUnpaidClaims: Number(claimInput.previousUnpaidClaims) || 0,
       previousDenials: Number(claimInput.previousDenials) || 0,
       outstandingAmount: Number(claimInput.outstandingAmount) || 0,
-      daysSinceClaimSubmission: Number(claimInput.daysSinceClaimSubmission) || 14,
+      daysSinceClaimSubmission: Number(claimInput.daysSinceClaimSubmission) || 0,
       claimType: claimInput.claimType || 'Outpatient',
-      finalPaymentStatus: 'Paid'
+      finalPaymentStatus: 'Paid',
     };
 
     return this.model.predictClaim(fullRecord);
   }
 
-  /**
-   * Appends newly submitted claim into active registry and localStorage
-   */
-  public addClaimToRegistry(record: ClaimRecord, prediction: ClaimPredictionResult): ClaimRecord {
+  public async addClaimToRegistry(record: ClaimRecord, prediction: ClaimPredictionResult): Promise<ClaimRecord> {
     const enrichedRecord: ClaimRecord = {
       ...record,
       predictedStatus: prediction.prediction,
       paymentProbability: prediction.probability,
       riskLevel: prediction.riskLevel,
-      finalPaymentStatus: prediction.prediction
+      finalPaymentStatus: prediction.prediction,
     };
 
-    this.claims.unshift(enrichedRecord);
+    const claimRes = await fetch('/api/claims', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...enrichedRecord,
+        claimStatus: 'Submitted',
+      }),
+    });
 
-    try {
-      const storedRaw = localStorage.getItem(STORAGE_KEY_CUSTOM_CLAIMS);
-      const existing: ClaimRecord[] = storedRaw ? JSON.parse(storedRaw) : [];
-      existing.unshift(enrichedRecord);
-      localStorage.setItem(STORAGE_KEY_CUSTOM_CLAIMS, JSON.stringify(existing.slice(0, 100)));
-    } catch (e) {
-      console.warn('Failed to persist claim', e);
+    if (!claimRes.ok) {
+      const errJson = await claimRes.json().catch(() => ({}));
+      throw new Error(errJson.message || 'Failed to save claim to database.');
     }
 
-    // Train or re-evaluate Random Forest model if 5 or more real claims exist
+    const savedJson = await claimRes.json();
+    const savedClaim: ClaimRecord = savedJson.data || enrichedRecord;
+
+    await fetch('/api/predictions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        claimId: savedClaim.claimId,
+        prediction: prediction.prediction,
+        probability: prediction.probability,
+        riskLevel: prediction.riskLevel,
+        votesPaid: prediction.votesPaid,
+        votesUnpaid: prediction.votesUnpaid,
+        votesTotal: prediction.votesTotal,
+        topFactors: prediction.topFactors,
+        inputFeatures: savedClaim,
+      }),
+    }).catch((err) => console.warn('[paymentPredictionService] Prediction log error:', err));
+
+    this.claims.unshift(savedClaim);
+
     if (this.claims.length >= 5) {
       this.metrics = this.model.train(this.claims);
     }
 
-    return enrichedRecord;
+    return savedClaim;
   }
 
   public getModelMetrics(): ModelMetrics | null {
@@ -319,7 +299,7 @@ class PaymentPredictionService {
   }
 
   public getDatasetLabel(): string {
-    return 'Evaluated Claims Registry';
+    return 'Neon PostgreSQL Claims Registry';
   }
 }
 

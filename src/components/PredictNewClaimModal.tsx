@@ -34,20 +34,20 @@ export const PredictNewClaimModal: React.FC<PredictNewClaimModalProps> = ({
     patientAge: 45,
     gender: 'Female' as Gender,
     department: 'General Medicine',
-    doctor: 'Dr. Robert Davis',
+    doctor: '',
     insuranceProvider: 'Medicare',
     claimAmount: 450,
-    procedureCode: 'CPT 99214',
-    procedureDescription: 'Office Outpatient Visit 30-39 Min',
-    diagnosisCode: 'ICD-10 E11.9',
-    diagnosisDescription: 'Type 2 diabetes mellitus without complications',
+    procedureCode: '',
+    procedureDescription: '',
+    diagnosisCode: '',
+    diagnosisDescription: '',
     numberOfProcedures: 1,
-    previousClaimsCount: 4,
-    previousPaidClaims: 4,
+    previousClaimsCount: 0,
+    previousPaidClaims: 0,
     previousUnpaidClaims: 0,
     previousDenials: 0,
     outstandingAmount: 0,
-    daysSinceClaimSubmission: 14,
+    daysSinceClaimSubmission: 0,
     claimType: 'Outpatient' as ClaimType
   }));
 
@@ -83,18 +83,22 @@ export const PredictNewClaimModal: React.FC<PredictNewClaimModalProps> = ({
     }, 300);
   };
 
-  const handleSaveToRegistry = () => {
+  const handleSaveToRegistry = async () => {
     if (!predictionResult) return;
-    const added = paymentPredictionService.addClaimToRegistry(
-      {
-        ...formData,
-        finalPaymentStatus: predictionResult.prediction
-      },
-      predictionResult
-    );
-    setIsSaved(true);
-    if (onClaimAdded) {
-      onClaimAdded(added);
+    try {
+      const added = await paymentPredictionService.addClaimToRegistry(
+        {
+          ...formData,
+          finalPaymentStatus: predictionResult.prediction
+        },
+        predictionResult
+      );
+      setIsSaved(true);
+      if (onClaimAdded) {
+        onClaimAdded(added);
+      }
+    } catch (err) {
+      console.error('Failed to save claim prediction:', err);
     }
   };
 
@@ -108,20 +112,20 @@ export const PredictNewClaimModal: React.FC<PredictNewClaimModalProps> = ({
       patientAge: 45,
       gender: 'Female',
       department: 'General Medicine',
-      doctor: 'Dr. Robert Davis',
+      doctor: '',
       insuranceProvider: 'Medicare',
       claimAmount: 450,
-      procedureCode: 'CPT 99214',
-      procedureDescription: 'Office Outpatient Visit 30-39 Min',
-      diagnosisCode: 'ICD-10 E11.9',
-      diagnosisDescription: 'Type 2 diabetes mellitus without complications',
+      procedureCode: '',
+      procedureDescription: '',
+      diagnosisCode: '',
+      diagnosisDescription: '',
       numberOfProcedures: 1,
-      previousClaimsCount: 4,
-      previousPaidClaims: 4,
+      previousClaimsCount: 0,
+      previousPaidClaims: 0,
       previousUnpaidClaims: 0,
       previousDenials: 0,
       outstandingAmount: 0,
-      daysSinceClaimSubmission: 14,
+      daysSinceClaimSubmission: 0,
       claimType: 'Outpatient'
     });
   };
@@ -284,7 +288,7 @@ export const PredictNewClaimModal: React.FC<PredictNewClaimModalProps> = ({
                       value={formData.doctor}
                       onChange={handleInputChange}
                       className="form-control"
-                      placeholder="Dr. Robert Davis"
+                      placeholder="Attending Physician Name"
                     />
                   </div>
 
@@ -637,21 +641,20 @@ export const PredictNewClaimModal: React.FC<PredictNewClaimModalProps> = ({
                             predictionResult.riskLevel === 'Low Risk'
                               ? '#dcfce7'
                               : predictionResult.riskLevel === 'Medium Risk'
-                              ? '#fef3c7'
-                              : '#fee2e2',
+                                ? '#fef3c7'
+                                : '#fee2e2',
                           color:
                             predictionResult.riskLevel === 'Low Risk'
                               ? '#15803d'
                               : predictionResult.riskLevel === 'Medium Risk'
-                              ? '#b45309'
-                              : '#be123c',
-                          border: `1px solid ${
-                            predictionResult.riskLevel === 'Low Risk'
-                              ? '#86efac'
-                              : predictionResult.riskLevel === 'Medium Risk'
+                                ? '#b45309'
+                                : '#be123c',
+                          border: `1px solid ${predictionResult.riskLevel === 'Low Risk'
+                            ? '#86efac'
+                            : predictionResult.riskLevel === 'Medium Risk'
                               ? '#fde68a'
                               : '#fca5a5'
-                          }`
+                            }`
                         }}
                       >
                         {predictionResult.riskLevel.toUpperCase()}
@@ -676,8 +679,8 @@ export const PredictNewClaimModal: React.FC<PredictNewClaimModalProps> = ({
                         predictionResult.probability >= 0.8
                           ? '#15803d'
                           : predictionResult.probability >= 0.5
-                          ? '#d97706'
-                          : '#dc2626'
+                            ? '#d97706'
+                            : '#dc2626'
                     }}
                   >
                     {Math.round(predictionResult.probability * 100)}%
@@ -704,8 +707,8 @@ export const PredictNewClaimModal: React.FC<PredictNewClaimModalProps> = ({
                         predictionResult.probability >= 0.8
                           ? '#16a34a'
                           : predictionResult.probability >= 0.5
-                          ? '#f59e0b'
-                          : '#ef4444',
+                            ? '#f59e0b'
+                            : '#ef4444',
                       borderRadius: 9999,
                       transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)'
                     }}
@@ -781,7 +784,7 @@ export const PredictNewClaimModal: React.FC<PredictNewClaimModalProps> = ({
                 }}
               >
                 <span style={{ fontSize: '0.75rem', color: '#64748b', fontStyle: 'italic' }}>
-                  Demo Prediction – Trained using synthetic historical claim data
+                  Random Forest Prediction – Evaluated against Neon PostgreSQL claims registry
                 </span>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button

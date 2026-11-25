@@ -6,7 +6,6 @@ import type {
   InsuranceInfo,
   PatientRegistration
 } from '../types';
-import { storageService } from './storageService';
 
 export interface ChargeCaptureSearchResult {
   patient: Patient;
@@ -23,68 +22,68 @@ export const chargeService = {
       if (res.ok) {
         const json = await res.json();
         if (json.success && Array.isArray(json.data) && json.data.length > 0) {
-          // If individual charge records exist in PostgreSQL, return cached encounter or mapped
-          const cached = storageService.getChargeCaptureByPatientId(patientId);
-          if (cached) return cached;
+          return json.data[0] as ChargeCaptureEncounter;
         }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.error('[chargeService] Failed to fetch charges for patient:', err);
     }
-    return storageService.getChargeCaptureByPatientId(patientId);
+    return null;
   },
 
   async getAll(): Promise<ChargeCaptureEncounter[]> {
-    return storageService.getChargeCaptures();
+    try {
+      const res = await fetch('/api/charges');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          return json.data as ChargeCaptureEncounter[];
+        }
+      }
+    } catch (err) {
+      console.error('[chargeService] Failed to fetch charges:', err);
+    }
+    return [];
   },
 
   async save(record: ChargeCaptureEncounter): Promise<ChargeCaptureEncounter> {
-    try {
-      // Persist individual charge items to PostgreSQL
-      if (record.items && record.items.length > 0) {
-        for (const item of record.items) {
-          await fetch('/api/charges', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              chargeId: item.id,
-              patientId: record.patientId,
-              appointmentId: record.appointmentId,
-              doctorId: record.doctorId,
-              serviceDescription: item.serviceDescription,
-              procedureCode: item.procedureCode,
-              diagnosisCode: item.diagnosisCode,
-              modifiers: item.modifiers,
-              quantity: item.quantity,
-              unitRate: item.unitRate,
-              chargeAmount: item.totalCharge,
-              insuranceExpected: item.insuranceExpected,
-              patientExpected: item.patientExpected,
-              insurancePaid: item.insurancePaid,
-              patientPaid: item.patientPaid,
-              codingStatus: item.codingStatus,
-              billingStatus: item.billingStatus
-            })
-          });
-        }
-      }
-    } catch {
-      // Fallback
+    const res = await fetch('/api/charges', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.message || 'Failed to save charge encounter in database.');
     }
 
-    storageService.saveChargeCapture(record);
-    return record;
+    const json = await res.json();
+    if (!json.success || !json.data) {
+      throw new Error(json.message || 'Database did not return the saved charge encounter.');
+    }
+
+    return json.data as ChargeCaptureEncounter;
   },
 
   async searchPatientsForChargeCapture(query: string): Promise<ChargeCaptureSearchResult[]> {
     const q = query.trim().toLowerCase();
-    const patients = storageService.getPatients();
-    const appointments = storageService.getAppointments();
-    const registrations = storageService.getRegistrations();
-    const insurances = storageService.getInsuranceList();
-    const charges = storageService.getChargeCaptures();
+    const [patRes, aptRes, regRes, insRes, chgRes] = await Promise.all([
+      fetch('/api/patients').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/appointments').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/registrations').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/insurance').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+      fetch('/api/charges').then((r) => (r.ok ? r.json() : { data: [] })).catch(() => ({ data: [] })),
+    ]);
+
+    const patients: Patient[] = Array.isArray(patRes?.data) ? patRes.data : [];
+    const appointments: Appointment[] = Array.isArray(aptRes?.data) ? aptRes.data : [];
+    const registrations: PatientRegistration[] = Array.isArray(regRes?.data) ? regRes.data : [];
+    const insurances: InsuranceInfo[] = Array.isArray(insRes?.data) ? insRes.data : [];
+    const charges: ChargeCaptureEncounter[] = Array.isArray(chgRes?.data) ? chgRes.data : [];
 
     const filteredPatients = patients.filter((p) => {
+      if (!q) return true;
       const matchName = `${p.firstName} ${p.lastName}`.toLowerCase().includes(q);
       const matchId = p.patientId.toLowerCase().includes(q);
       const matchAppt = appointments.some(
@@ -108,7 +107,7 @@ export const chargeService = {
         appointment: patientAppointments[0] || null,
         registration: reg,
         insurance: ins,
-        chargeCapture: charge
+        chargeCapture: charge,
       };
     });
   },
@@ -139,7 +138,7 @@ export const chargeService = {
       patientResponsibility: safePatientResponsibility,
       patientPaid: safePatientPaid,
       patientPending,
-      totalOutstandingAR
+      totalOutstandingAR,
     };
-  }
+  },
 };

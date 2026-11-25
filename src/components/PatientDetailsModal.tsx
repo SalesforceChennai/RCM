@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import type { Patient, Appointment } from '../types';
 import { patientAggregatorService, type AggregatedPatient } from '../services/patientAggregatorService';
-import { storageService } from '../services/storageService';
+import { getTodayDateStr } from '../services/statsService';
 
 interface PatientDetailsModalProps {
   patientId: string | null;
@@ -50,24 +50,34 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
       return;
     }
 
-    setLoading(true);
-    try {
-      const allAggregated = patientAggregatorService.getAggregatedPatients();
-      const cleanId = patientId.toLowerCase();
-      const match = allAggregated.find(
-        (p) => p.id.toLowerCase() === cleanId || p.patientId.toLowerCase() === cleanId
-      );
-      setAggregated(match || null);
-    } catch (err) {
-      console.error('Failed to load patient details', err);
-    } finally {
-      setLoading(false);
-    }
+    let cancelled = false;
+    const loadPatientDetails = async () => {
+      setLoading(true);
+      try {
+        const allAggregated = await patientAggregatorService.getAggregatedPatients();
+        if (cancelled) return;
+        const cleanId = patientId.toLowerCase();
+        const match = allAggregated.find(
+          (p) => p.id.toLowerCase() === cleanId || p.patientId.toLowerCase() === cleanId
+        );
+        setAggregated(match || null);
+      } catch (err) {
+        console.error('Failed to load patient details', err);
+        if (!cancelled) setAggregated(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadPatientDetails();
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, patientId]);
 
   if (!isOpen) return null;
 
-  const currentDate = storageService.getCurrentDate() || '2024-05-31';
+  const currentDate = getTodayDateStr();
 
   // Split previous and upcoming appointments
   const previousAppointments = aggregated?.allAppointments.filter(
@@ -406,10 +416,10 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
                         Assigned / Consulting Doctor
                       </div>
                       <div style={{ fontWeight: 700, color: '#1e3a8a', fontSize: '0.9375rem', marginTop: 4 }}>
-                        {aggregated.assignedDoctor?.name || 'Dr. Smith'}
+                        {aggregated.assignedDoctor?.name || 'Not Assigned'}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: '#3b82f6', marginTop: 2 }}>
-                        {aggregated.assignedDoctor?.specialization || 'Attending Physician'}
+                        {aggregated.assignedDoctor?.specialization || '—'}
                       </div>
                     </div>
 
@@ -418,7 +428,7 @@ export const PatientDetailsModal: React.FC<PatientDetailsModalProps> = ({
                         Clinical Department
                       </div>
                       <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.9375rem', marginTop: 4 }}>
-                        {aggregated.department?.name || 'General Medicine'}
+                        {aggregated.department?.name || 'Not Assigned'}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: 2 }}>
                         Specialized Outpatient Wing

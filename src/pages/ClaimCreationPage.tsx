@@ -1,12 +1,17 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ArrowLeft,
   Send,
   FileCheck2,
-  FileX
+  FileX,
+  Loader2
 } from 'lucide-react';
-import { storageService } from '../services/storageService';
+import type { Patient, MedicalCodingRecord, ChargeCaptureEncounter, InsuranceInfo } from '../types';
+import { patientService } from '../services/patientService';
 import { medicalCodingService } from '../services/medicalCodingService';
+import { chargeService } from '../services/chargeService';
+import { insuranceService } from '../services/insuranceService';
+import { calculateAge } from '../services/patientAggregatorService';
 
 interface ClaimCreationPageProps {
   patientId?: string | null;
@@ -21,12 +26,50 @@ export const ClaimCreationPage: React.FC<ClaimCreationPageProps> = ({
   onNavigateToDashboard,
   onSuccess
 }) => {
-  const allPatients = storageService.getPatients();
-  const patient = patientId ? allPatients.find((p) => p.id === patientId) : null;
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [coding, setCoding] = useState<MedicalCodingRecord | null>(null);
+  const [charge, setCharge] = useState<ChargeCaptureEncounter | null>(null);
+  const [ins, setIns] = useState<InsuranceInfo | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>('');
 
-  const coding = patient ? (storageService.getMedicalCodingByPatientId(patient.id) || medicalCodingService.getOrCreateCodingRecord(patient.id)) : null;
-  const charge = patient ? storageService.getChargeCaptureByPatientId(patient.id) : null;
-  const ins = patient ? storageService.getInsuranceByPatientId(patient.id) : null;
+  useEffect(() => {
+    if (!patientId) {
+      setPatient(null);
+      setCoding(null);
+      setCharge(null);
+      setIns(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadClaimContext = async () => {
+      setLoading(true);
+      try {
+        const [pat, cod, chg, insRec] = await Promise.all([
+          patientService.getById(patientId),
+          medicalCodingService.getOrCreateCodingRecord(patientId),
+          chargeService.getByPatientId(patientId),
+          insuranceService.getInsurance(patientId),
+        ]);
+        if (cancelled) return;
+        setPatient(pat);
+        setCoding(cod);
+        setCharge(chg);
+        setIns(insRec);
+      } catch (err) {
+        console.error('[ClaimCreationPage] Failed to load claim context:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    loadClaimContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
 
   const totalBilled = coding?.services?.reduce((acc, s) => acc + (Number(s.totalCharge) || 0), 0) || 0;
   const payerName = charge?.insuranceProvider || ins?.insuranceProvider || '—';
@@ -36,26 +79,42 @@ export const ClaimCreationPage: React.FC<ClaimCreationPageProps> = ({
 
   const handleTransmitClaim = async () => {
     if (!patient) return;
+    setIsSubmitting(true);
+    setSubmitError('');
     try {
-      await fetch('/api/claims', {
+      const res = await fetch('/api/claims', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           claimId: `CLM-${Date.now()}`,
           patientId: patient.id,
-          appointmentId: coding?.appointmentId || charge?.appointmentId,
-          insuranceId: ins?.id,
-          totalBilledAmount: totalBilled,
-          primaryDiagnosisCode: primaryDx?.code || '',
-          procedureCodes: coding?.procedures?.map((p) => p.cptCode) || [],
+          patientName: `${patient.firstName} ${patient.lastName}`.trim(),
+          patientAge: calculateAge(patient.dob),
+          gender: patient.gender,
+          department: coding?.departmentName || charge?.departmentName || '',
+          doctor: attendingDoctor !== '—' ? attendingDoctor : '',
+          insuranceProvider: payerName !== '—' ? payerName : '',
+          claimAmount: totalBilled,
+          procedureCode: cptList || '',
+          diagnosisCode: primaryDx?.code || '',
+          diagnosisDescription: primaryDx?.description || '',
+          numberOfProcedures: coding?.procedures?.length || 1,
           claimStatus: 'Submitted',
           submissionDate: new Date().toISOString()
         })
       });
-    } catch {
-      // Fallback
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.message || 'Failed to submit electronic claim to Neon PostgreSQL.');
+      }
+
+      onSuccess(`✓ CMS-1500 electronic claim batch generated and transmitted to ${payerName !== '—' ? payerName : 'Insurance'} Clearinghouse (saved in Neon PostgreSQL)!`);
+    } catch (err: any) {
+      setSubmitError(err?.message || 'Failed to submit electronic claim.');
+    } finally {
+      setIsSubmitting(false);
     }
-    onSuccess(`✓ CMS-1500 electronic claim batch generated and transmitted to ${payerName !== '—' ? payerName : 'Insurance'} Clearinghouse (saved in PostgreSQL)!`);
   };
 
   return (
@@ -97,16 +156,30 @@ export const ClaimCreationPage: React.FC<ClaimCreationPageProps> = ({
               type="button"
               className="btn-primary"
               onClick={handleTransmitClaim}
+              disabled={isSubmitting}
               style={{ display: 'flex', alignItems: 'center', gap: 8, backgroundColor: '#059669' }}
             >
               <Send size={16} />
-              <span>Submit Electronic Claim</span>
+              <span>{isSubmitting ? 'Submitting...' : 'Submit Electronic Claim'}</span>
             </button>
           )}
         </div>
       </div>
 
-      {!patient ? (
+      {submitError && (
+        <div style={{ marginBottom: 16, padding: '12px 16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, color: '#b91c1c', fontSize: '0.875rem' }}>
+          {submitError}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="form-section-card" style={{ padding: 48, textAlign: 'center', borderRadius: 12, backgroundColor: '#ffffff' }}>
+          <Loader2 size={28} className="animate-spin" style={{ margin: '0 auto 12px', color: '#2563eb' }} />
+          <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#475569' }}>
+            Loading claim details from Neon PostgreSQL...
+          </div>
+        </div>
+      ) : !patient ? (
         <div className="form-section-card" style={{ padding: 48, textAlign: 'center', border: '1px dashed #cbd5e1', borderRadius: 12, backgroundColor: '#ffffff' }}>
           <div style={{ width: 56, height: 56, borderRadius: '50%', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#64748b' }}>
             <FileX size={28} />
